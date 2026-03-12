@@ -718,6 +718,13 @@ to authenticated
 using (sender_id = auth.uid() or receiver_id = auth.uid())
 with check (sender_id = auth.uid() or receiver_id = auth.uid());
 
+drop policy if exists "contact_requests_delete_participants" on public.contact_requests;
+create policy "contact_requests_delete_participants"
+on public.contact_requests
+for delete
+to authenticated
+using (sender_id = auth.uid() or receiver_id = auth.uid());
+
 drop policy if exists "conversations_select_members" on public.conversations;
 create policy "conversations_select_members"
 on public.conversations

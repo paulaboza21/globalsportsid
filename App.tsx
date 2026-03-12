@@ -787,6 +787,7 @@ export default function App() {
   const [profileBusy, setProfileBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  const [requestActionBusyId, setRequestActionBusyId] = useState<string | null>(null);
   const [playerFilterDraft, setPlayerFilterDraft] = useState<PlayerFilters>(emptyPlayerFilters);
   const [activePlayerFilters, setActivePlayerFilters] = useState<PlayerFilters>(emptyPlayerFilters);
   const [showCoachFilters, setShowCoachFilters] = useState(false);
@@ -1615,6 +1616,21 @@ export default function App() {
     return true;
   };
 
+  const addConversationMembers = async (conversationId: string, profileIds: string[]) => {
+    for (const profileId of profileIds) {
+      const { error } = await supabase.from('conversation_members').insert({
+        conversation_id: conversationId,
+        profile_id: profileId,
+      });
+
+      if (error) {
+        return error;
+      }
+    }
+
+    return null;
+  };
+
   const completeAppEntry = () => {
     setTab('explore');
     setExploreMode(role === 'coach' ? 'players' : 'coaches');
@@ -2229,10 +2245,7 @@ export default function App() {
 
       conversationId = conversation.id;
 
-      const { error: memberInsertError } = await supabase.from('conversation_members').insert([
-        { conversation_id: conversationId, profile_id: session.user.id },
-        { conversation_id: conversationId, profile_id: otherProfile.profileId },
-      ]);
+      const memberInsertError = await addConversationMembers(conversationId!, [session.user.id, otherProfile.profileId]);
 
       if (memberInsertError) {
         Alert.alert('Conversation setup failed', memberInsertError.message);
@@ -2342,10 +2355,7 @@ export default function App() {
 
         conversationId = conversation.id;
 
-        const { error: memberInsertError } = await supabase.from('conversation_members').insert([
-          { conversation_id: conversationId, profile_id: session.user.id },
-          { conversation_id: conversationId, profile_id: coach.profileId },
-        ]);
+        const memberInsertError = await addConversationMembers(conversationId!, [session.user.id, coach.profileId]);
 
         if (memberInsertError) {
           Alert.alert('Conversation setup failed', memberInsertError.message);
@@ -2811,90 +2821,90 @@ export default function App() {
   const handleAcceptRequest = async (requestId: string) => {
     const request = requestThreads.find((item) => item.id === requestId);
 
-    if (!request) {
+    if (!request || requestActionBusyId) {
       return;
     }
+
+    setRequestActionBusyId(requestId);
 
     const matchingConversation = conversationThreads.find(
       (thread) => thread.name === request.name && thread.sport === request.sport,
     );
     let conversationId = matchingConversation?.conversationId ?? matchingConversation?.id ?? `${requestId}-chat`;
+    try {
+      if (session?.user && request.senderId && isSupabaseConfigured) {
+        if (!matchingConversation?.conversationId) {
+          const { data: existingMemberships, error: membershipError } = await supabase
+            .from('conversation_members')
+            .select('conversation_id')
+            .in('profile_id', [session.user.id, request.senderId]);
 
-    if (session?.user && request.senderId && isSupabaseConfigured) {
-      const { error: requestError } = await supabase
-        .from('contact_requests')
-        .update({ status: 'accepted' })
-        .eq('id', request.id);
+          if (membershipError) {
+            Alert.alert('Conversation lookup failed', membershipError.message);
+            return;
+          }
 
-      if (requestError) {
-        Alert.alert('Request update failed', requestError.message);
-        return;
-      }
+          const counts = new Map<string, number>();
+          for (const row of existingMemberships ?? []) {
+            counts.set(row.conversation_id, (counts.get(row.conversation_id) ?? 0) + 1);
+          }
 
-      if (!matchingConversation?.conversationId) {
-        const { data: existingMemberships, error: membershipError } = await supabase
-          .from('conversation_members')
-          .select('conversation_id')
-          .in('profile_id', [session.user.id, request.senderId]);
+          const sharedConversationId = Array.from(counts.entries()).find(([, count]) => count > 1)?.[0];
 
-        if (membershipError) {
-          Alert.alert('Conversation lookup failed', membershipError.message);
+          if (sharedConversationId) {
+            conversationId = sharedConversationId;
+          } else {
+            const { data: conversation, error: conversationError } = await supabase
+              .from('conversations')
+              .insert({})
+              .select('id')
+              .single();
+
+            if (conversationError || !conversation) {
+              Alert.alert('Conversation creation failed', conversationError?.message || 'Unable to create conversation.');
+              return;
+            }
+
+            conversationId = conversation.id;
+
+            const memberInsertError = await addConversationMembers(conversationId, [session.user.id, request.senderId]);
+
+            if (memberInsertError) {
+              Alert.alert('Conversation setup failed', memberInsertError.message);
+              return;
+            }
+          }
+        }
+
+        const { error: requestError } = await supabase
+          .from('contact_requests')
+          .update({ status: 'accepted' })
+          .eq('id', request.id);
+
+        if (requestError) {
+          Alert.alert('Request update failed', requestError.message);
           return;
         }
-
-        const counts = new Map<string, number>();
-        for (const row of existingMemberships ?? []) {
-          counts.set(row.conversation_id, (counts.get(row.conversation_id) ?? 0) + 1);
-        }
-
-        const sharedConversationId = Array.from(counts.entries()).find(([, count]) => count > 1)?.[0];
-
-        if (sharedConversationId) {
-          conversationId = sharedConversationId;
-        } else {
-          const { data: conversation, error: conversationError } = await supabase
-            .from('conversations')
-            .insert({})
-            .select('id')
-            .single();
-
-          if (conversationError || !conversation) {
-            Alert.alert('Conversation creation failed', conversationError?.message || 'Unable to create conversation.');
-            return;
-          }
-
-          conversationId = conversation.id;
-
-          const { error: memberInsertError } = await supabase.from('conversation_members').insert([
-            { conversation_id: conversationId, profile_id: session.user.id },
-            { conversation_id: conversationId, profile_id: request.senderId },
-          ]);
-
-          if (memberInsertError) {
-            Alert.alert('Conversation setup failed', memberInsertError.message);
-            return;
-          }
-        }
       }
-    }
 
-    if (!matchingConversation) {
+      const acceptedThread: ConversationThread = {
+        id: conversationId,
+        name: request.name,
+        preview: request.text,
+        sport: request.sport,
+        messages: [{ from: 'them', body: request.text, isRead: true }],
+        conversationId,
+        otherProfileId: request.senderId,
+        otherRole: request.otherRole,
+        avatar: request.avatar,
+        team: request.team,
+        position: request.position,
+        age: request.age,
+        unreadCount: 0,
+      };
+
       setConversationThreads((current) => [
-        {
-          id: conversationId,
-          name: request.name,
-          preview: request.text,
-          sport: request.sport,
-          messages: [{ from: 'them', body: request.text, isRead: true }],
-          conversationId,
-          otherProfileId: request.senderId,
-          otherRole: request.otherRole,
-          avatar: request.avatar,
-          team: request.team,
-          position: request.position,
-          age: request.age,
-          unreadCount: 0,
-        },
+        acceptedThread,
         ...removeDuplicateThreads(current, {
           id: conversationId,
           conversationId,
@@ -2903,15 +2913,23 @@ export default function App() {
           sport: request.sport,
         }),
       ]);
-    }
 
-    setRequestThreads((current) => current.filter((item) => item.id !== requestId));
-    setShowRequests(false);
-    setSelectedConversationId(conversationId);
-    setDraftMessage('');
+      setRequestThreads((current) => current.filter((item) => item.id !== requestId));
+      setShowRequests(false);
+      setSelectedConversationId(conversationId);
+      setDraftMessage('');
+      setTab('messages');
+    } finally {
+      setRequestActionBusyId(null);
+    }
   };
 
   const handleDeleteRequest = async (requestId: string) => {
+    if (requestActionBusyId) {
+      return;
+    }
+
+    setRequestActionBusyId(requestId);
     const nextRequests = requestThreads.filter((item) => item.id !== requestId);
     setRequestThreads(nextRequests);
 
@@ -2919,14 +2937,18 @@ export default function App() {
       setShowRequests(false);
     }
 
-    if (session?.user && isSupabaseConfigured) {
-      const { error } = await supabase.from('contact_requests').update({ status: 'declined' }).eq('id', requestId);
+    try {
+      if (session?.user && isSupabaseConfigured) {
+        const { error } = await supabase.from('contact_requests').delete().eq('id', requestId);
 
-      if (error) {
-        setRequestThreads(requestThreads);
-        Alert.alert('Delete failed', error.message);
-        return;
+        if (error) {
+          setRequestThreads(requestThreads);
+          Alert.alert('Delete failed', error.message);
+          return;
+        }
       }
+    } finally {
+      setRequestActionBusyId(null);
     }
   };
 
@@ -3343,6 +3365,7 @@ export default function App() {
                             () => setShowRequests(false),
                             () => handleAcceptRequest(item.id),
                             () => handleDeleteRequest(item.id),
+                            requestActionBusyId === item.id,
                           ),
                         )
                       : (
@@ -4072,6 +4095,7 @@ function requestCard(
   onBack: () => void,
   onAccept: () => void,
   onDelete: () => void,
+  busy: boolean,
 ) {
   return (
     <View key={request.id} style={styles.box}>
@@ -4081,10 +4105,10 @@ function requestCard(
       <Text style={styles.cardName}>{request.name}</Text>
       <Text style={styles.cardText}>{request.text}</Text>
       <View style={styles.actionRowCompact}>
-        <Pressable style={styles.darkAction} onPress={onAccept}>
-          <Text style={styles.darkActionText}>Accept</Text>
+        <Pressable style={[styles.darkAction, busy ? styles.disabledAction : null]} onPress={() => !busy && onAccept()} disabled={busy}>
+          <Text style={styles.darkActionText}>{busy ? 'Please wait...' : 'Accept'}</Text>
         </Pressable>
-        <Pressable style={styles.lightAction} onPress={onDelete}>
+        <Pressable style={[styles.lightAction, busy ? styles.disabledAction : null]} onPress={() => !busy && onDelete()} disabled={busy}>
           <Text style={styles.lightActionText}>Delete</Text>
         </Pressable>
       </View>
