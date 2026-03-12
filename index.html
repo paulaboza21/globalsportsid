@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global Sports ID Legal</title>
+  <style>
+    :root {
+      --bg: #050505;
+      --panel: #0d223d;
+      --text: #f5f2e8;
+      --muted: #cbb98a;
+      --gold: #d6ad3d;
+      --line: rgba(214, 173, 61, 0.2);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(214, 173, 61, 0.1), transparent 25%),
+        var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .card {
+      width: min(720px, 100%);
+      background: linear-gradient(180deg, rgba(13, 34, 61, 0.96), rgba(7, 18, 33, 0.96));
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 36px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      color: var(--gold);
+      font-size: clamp(2rem, 4vw, 3rem);
+    }
+
+    p {
+      color: var(--muted);
+      font-size: 1.04rem;
+      line-height: 1.6;
+    }
+
+    .links {
+      display: grid;
+      gap: 16px;
+      margin-top: 28px;
+    }
+
+    a {
+      display: block;
+      padding: 18px 20px;
+      border-radius: 16px;
+      text-decoration: none;
+      color: var(--text);
+      border: 1px solid var(--line);
+      background: rgba(214, 173, 61, 0.06);
+    }
+
+    a strong {
+      display: block;
+      color: var(--gold);
+      margin-bottom: 6px;
+      font-size: 1.08rem;
+    }
+
+    .footer {
+      margin-top: 28px;
+      font-size: 0.98rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Global Sports ID</h1>
+    <p>Official legal and support pages for Global Sports ID.</p>
+
+    <section class="links">
+      <a href="./privacy-policy.html">
+        <strong>Privacy Policy</strong>
+        View how Global Sports ID collects, uses, and protects user data.
+      </a>
+      <a href="./terms-of-service.html">
+        <strong>Terms of Service</strong>
+        View the terms that govern access to and use of Global Sports ID.
+      </a>
+    </section>
+
+    <p class="footer">Contact: <a href="mailto:info@globalsportsid.com">info@globalsportsid.com</a></p>
+  </main>
+</body>
+</html>
