@@ -13,14 +13,12 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "bundleIdentifier": "com.globalsportsid.app",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Global Sports ID uses your photo library so you can choose a profile picture."
       },
       "supportsTablet": false
     },
     "android": {
-      "package": "com.globalsportsid.app",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png",

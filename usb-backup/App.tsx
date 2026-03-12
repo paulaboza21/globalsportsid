@@ -23,7 +23,7 @@ import {
   View,
 } from 'react-native';
 
-import { appRedirectUrl, isSupabaseConfigured, supabase } from './lib/supabase';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 type Role = 'player' | 'coach';
 type Sport = 'soccer' | 'football' | 'tennis' | 'baseball' | 'basketball';
@@ -115,28 +115,12 @@ type ConversationThread = {
   age?: string;
 };
 
-const isCrossRoleConversation = (currentRole: Role, otherRole?: Role) => {
-  if (!otherRole) {
-    return currentRole === 'player';
-  }
-
-  return otherRole !== currentRole;
-};
-
-const isVisibleConversationThread = (thread: ConversationThread, currentRole: Role) =>
-  isCrossRoleConversation(currentRole, thread.otherRole);
-
 type RequestThread = {
   id: string;
   name: string;
   text: string;
   sport: Sport;
   senderId?: string;
-  otherRole?: Role;
-  avatar?: string;
-  team?: string;
-  position?: string;
-  age?: string;
 };
 
 type PlayerCard = {
@@ -640,7 +624,6 @@ const initialMessages: ConversationThread[] = [
     name: 'COACH ALLAN',
     preview: 'Hello, I am looking for a defender to join my team',
     sport: 'soccer',
-    otherRole: 'coach',
     messages: [
       { from: 'them', body: 'Hello, I am looking for a defender to join my team.' },
       { from: 'me', body: 'Hi coach, I am interested and can send my full highlights.' },
@@ -652,7 +635,6 @@ const initialMessages: ConversationThread[] = [
     name: 'COACH ZAIRA',
     preview: 'Hello, I am looking for a defender to join my team',
     sport: 'soccer',
-    otherRole: 'coach',
     messages: [
       { from: 'them', body: 'We are recruiting defenders for next season.' },
       { from: 'me', body: 'I would love to hear more about the opportunity.' },
@@ -663,7 +645,6 @@ const initialMessages: ConversationThread[] = [
     name: 'COACH ELL',
     preview: 'Hello, I am looking for a defender to join my team',
     sport: 'soccer',
-    otherRole: 'coach',
     messages: [
       { from: 'them', body: 'Can you share your recent match clips and your current club?' },
     ],
@@ -786,7 +767,6 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [authError, setAuthError] = useState('');
-  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [playerFilterDraft, setPlayerFilterDraft] = useState<PlayerFilters>(emptyPlayerFilters);
   const [activePlayerFilters, setActivePlayerFilters] = useState<PlayerFilters>(emptyPlayerFilters);
   const [showCoachFilters, setShowCoachFilters] = useState(false);
@@ -800,55 +780,6 @@ export default function App() {
       if (!isSupabaseConfigured) {
         setLoadingSession(false);
         return;
-      }
-
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
-        const hashParams = new URLSearchParams(hash);
-        const searchParams = new URLSearchParams(window.location.search);
-        const accessToken = hashParams.get('access_token');
-        const refreshToken = hashParams.get('refresh_token');
-        const recoveryType = hashParams.get('type');
-        const authError =
-          hashParams.get('error_description') ||
-          hashParams.get('error') ||
-          searchParams.get('error_description') ||
-          searchParams.get('error');
-
-        if (authError && isMounted) {
-          const decodedError = decodeURIComponent(authError.replace(/\+/g, ' '));
-          const friendlyError = /expired|invalid/i.test(decodedError)
-            ? 'This password reset link is invalid or has expired. Please request a new one.'
-            : decodedError;
-
-          setIsPasswordRecovery(false);
-          setAuthMode('login');
-          setPhase('auth');
-          setAuthError(friendlyError);
-          window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-        } else if (accessToken && refreshToken) {
-          const { data: recoveryData, error: recoveryError } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          });
-
-          if (recoveryError) {
-            console.error('recovery session error', recoveryError);
-            Alert.alert('Recovery error', recoveryError.message);
-          } else if (isMounted) {
-            if (recoveryType === 'recovery') {
-              setIsPasswordRecovery(true);
-              setPhase('auth');
-              setAuthMode('login');
-              setAuthError('');
-              setForm((current) => ({ ...current, password: '' }));
-            }
-
-            setSession(recoveryData.session ?? null);
-          }
-
-          window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-        }
       }
 
       const { data, error } = await supabase.auth.getSession();
@@ -868,16 +799,8 @@ export default function App() {
 
     restoreSession();
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (isMounted) {
-        if (event === 'PASSWORD_RECOVERY') {
-          setIsPasswordRecovery(true);
-          setPhase('auth');
-          setAuthMode('login');
-          setAuthError('');
-          setForm((current) => ({ ...current, password: '' }));
-        }
-
         setSession(nextSession);
       }
     });
@@ -889,7 +812,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session?.user || isPasswordRecovery) {
+    if (!session?.user) {
       return;
     }
 
@@ -932,7 +855,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [isPasswordRecovery, phase, role, session]);
+  }, [phase, role, session]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -1146,11 +1069,6 @@ export default function App() {
             text: row.note || 'Would like to start a conversation with you.',
             sport: (senderMap.get(row.sender_id)?.sport as Sport) || sport,
             senderId: row.sender_id,
-            otherRole: senderMap.get(row.sender_id)?.role as Role | undefined,
-            avatar: senderMap.get(row.sender_id)?.avatar_url || undefined,
-            team: senderMap.get(row.sender_id)?.team_name || undefined,
-            position: senderMap.get(row.sender_id)?.position || undefined,
-            age: senderMap.get(row.sender_id)?.age ? String(senderMap.get(row.sender_id)?.age) : undefined,
           })),
         );
       } else {
@@ -1287,9 +1205,7 @@ export default function App() {
       const nextThreads = [...pendingOutgoingThreads, ...remoteThreads];
 
       setConversationThreads(
-        nextThreads.length
-          ? nextThreads.filter((thread) => isVisibleConversationThread(thread, role))
-          : initialMessages.filter((thread) => thread.sport === sport && isVisibleConversationThread(thread, role)),
+        nextThreads.length ? nextThreads : initialMessages.filter((thread) => thread.sport === sport),
       );
     };
 
@@ -1368,10 +1284,6 @@ export default function App() {
           return false;
         }
 
-        if (!isVisibleConversationThread(thread, role)) {
-          return false;
-        }
-
         if (!conversationSearch.trim()) {
           return true;
         }
@@ -1379,7 +1291,7 @@ export default function App() {
         const query = conversationSearch.trim().toLowerCase();
         return thread.name.toLowerCase().includes(query) || thread.preview.toLowerCase().includes(query);
       }),
-    [conversationSearch, conversationThreads, role, sport],
+    [conversationSearch, conversationThreads, sport],
   );
   const filteredRequests = useMemo(() => requestThreads.filter((request) => request.sport === sport), [requestThreads, sport]);
   const locationSuggestions = useMemo(() => {
@@ -1684,88 +1596,7 @@ export default function App() {
     Alert.alert('Wrong account type', `This email is registered as a ${accountRole}. Use the ${accountRole} login.`);
   };
 
-  const handlePasswordReset = async () => {
-    if (!form.password.trim()) {
-      setAuthError('Enter a new password.');
-      Alert.alert('Missing password', 'Enter a new password.');
-      return;
-    }
-
-    if (form.password.trim().length < 6) {
-      setAuthError('Password must be at least 6 characters.');
-      Alert.alert('Password too short', 'Password must be at least 6 characters.');
-      return;
-    }
-
-    setAuthError('');
-    setAuthBusy(true);
-
-    const { error } = await supabase.auth.updateUser({
-      password: form.password,
-    });
-
-    if (error) {
-      setAuthBusy(false);
-      setAuthError(error.message);
-      Alert.alert('Reset failed', error.message);
-      return;
-    }
-
-    await supabase.auth.signOut();
-    setSession(null);
-    setIsPasswordRecovery(false);
-    setAuthBusy(false);
-    setAuthMode('login');
-    setForm((current) => ({ ...current, password: '' }));
-    setAuthError('Password updated. Log in with your new password.');
-    Alert.alert('Password updated', 'Your password has been updated. Log in with your new password.');
-  };
-
-  const handleForgotPassword = async () => {
-    const email = form.email.trim();
-
-    if (!email) {
-      setAuthError('Enter your email first.');
-      Alert.alert('Missing email', 'Enter your email first so we can send the reset link.');
-      return;
-    }
-
-    if (!emailPattern.test(email)) {
-      setAuthError('Enter a valid email address.');
-      Alert.alert('Invalid email', 'Enter a valid email address first.');
-      return;
-    }
-
-    setAuthError('');
-    setAuthBusy(true);
-
-    const redirectTo =
-      Platform.OS === 'web' && typeof window !== 'undefined'
-        ? appRedirectUrl || window.location.origin
-        : 'globalsportsid://reset-password';
-
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
-    });
-
-    setAuthBusy(false);
-
-    if (error) {
-      setAuthError(error.message);
-      Alert.alert('Reset email failed', error.message);
-      return;
-    }
-
-    setAuthError(`Password reset email sent to ${email}.`);
-    Alert.alert('Reset email sent', `We sent a password reset link to ${email}.`);
-  };
-
   const handleAuth = async () => {
-    if (isPasswordRecovery) {
-      await handlePasswordReset();
-      return;
-    }
-
     if (!isSupabaseConfigured) {
       setAuthError('Supabase is not configured. Check .env and restart Expo.');
       Alert.alert('Supabase not configured', 'Your .env file must contain the project URL and publishable key.');
@@ -1797,22 +1628,6 @@ export default function App() {
       });
 
       if (error) {
-        if (/invalid login credentials/i.test(error.message)) {
-          const { data: roleLookup, error: roleLookupError } = await supabase.rpc('lookup_role_by_email', {
-            target_email: form.email.trim(),
-          });
-
-          if (!roleLookupError && roleLookup && roleLookup !== role) {
-            setAuthBusy(false);
-            setAuthError(`This email is registered as a ${roleLookup}. Use the ${roleLookup} login.`);
-            Alert.alert(
-              'Wrong account type',
-              `This email is registered as a ${roleLookup}. Use the ${roleLookup} login.`,
-            );
-            return;
-          }
-        }
-
         setAuthBusy(false);
         console.error('login error', error);
         setAuthError(error.message);
@@ -1914,14 +1729,10 @@ export default function App() {
     });
 
     if (error) {
-      const duplicateSignup =
-        /already registered|already exists|user already/i.test(error.message) ||
-        error.status === 422;
-      const duplicateMessage = 'Email already registered';
       setAuthBusy(false);
       console.error('signup error', error);
-      setAuthError(duplicateSignup ? duplicateMessage : error.message);
-      Alert.alert('Registration failed', duplicateSignup ? duplicateMessage : error.message);
+      setAuthError(error.message);
+      Alert.alert('Registration failed', error.message);
       return;
     }
 
@@ -1948,24 +1759,31 @@ export default function App() {
       return;
     }
 
-    const duplicateSignupAttempt =
-      Array.isArray(data.user.identities) &&
-      data.user.identities.length === 0;
+    const { data: loginData, error: loginAfterSignupError } = await supabase.auth.signInWithPassword({
+      email: form.email.trim(),
+      password: form.password,
+    });
 
-    setAuthBusy(false);
-
-    if (duplicateSignupAttempt) {
-      setAuthError('Email already registered');
-      Alert.alert('Registration failed', 'Email already registered');
+    if (loginAfterSignupError || !loginData.user || !loginData.session) {
+      setAuthBusy(false);
+      setAuthError('Check your email confirmation settings, then log in.');
+      Alert.alert('Check your email', 'If email confirmation is enabled, confirm the account before logging in.');
+      setAuthMode('login');
       return;
     }
 
-    setAuthError('Check your email to confirm your account, then log in.');
-    Alert.alert(
-      'Check your email',
-      'We sent you a confirmation email. Confirm your account first, then come back and log in.',
-    );
-    setAuthMode('login');
+    setSession(loginData.session);
+    const { profile: createdProfile, error: createdProfileError } = await ensureProfileRecord(loginData.user, role, sport, form);
+    setAuthBusy(false);
+
+    if (createdProfileError || !createdProfile) {
+      setAuthError(createdProfileError?.message || 'We could not finish creating your profile.');
+      Alert.alert('Registration failed', createdProfileError?.message || 'We could not finish creating your profile.');
+      return;
+    }
+
+    hydrateFromProfile(createdProfile);
+    completeAppEntry();
     return;
   };
 
@@ -2155,38 +1973,8 @@ export default function App() {
     },
     openingMessage: string,
   ) => {
-    if (otherProfile.role && otherProfile.role === role) {
-      Alert.alert('Messaging not allowed', `A ${role} account cannot message another ${role} account.`);
-      return;
-    }
-
     if (!session?.user || !otherProfile.profileId || !isSupabaseConfigured) {
-      const fallbackConversationId = `${otherProfile.name.toLowerCase().replace(/\s+/g, '-')}-chat`;
-
-      setConversationThreads((current) => [
-        {
-          id: fallbackConversationId,
-          otherProfileId: otherProfile.profileId,
-          otherRole: otherProfile.role,
-          name: otherProfile.name,
-          preview: openingMessage,
-          sport: otherProfile.sport,
-          avatar: otherProfile.avatar,
-          team: otherProfile.team,
-          position: otherProfile.position,
-          age: otherProfile.age,
-          messages: [{ from: 'me', body: openingMessage, isRead: true }],
-          unreadCount: 0,
-        },
-        ...removeDuplicateThreads(current, {
-          id: fallbackConversationId,
-          otherProfileId: otherProfile.profileId,
-          name: otherProfile.name,
-          sport: otherProfile.sport,
-        }),
-      ]);
-      resetMessageView();
-      setSelectedConversationId(fallbackConversationId);
+      ensureConversation(otherProfile.name, openingMessage, otherProfile.sport);
       return;
     }
 
@@ -2476,24 +2264,35 @@ export default function App() {
     }
 
     if (role === 'coach') {
-      setSelectedPlayerId(null);
       await openDirectConversation(
-        {
-          profileId: player.profileId,
-          name: player.name,
-          role: 'player',
-          sport: player.sport,
-          avatar: player.avatar,
-          team: player.team,
-          position: player.position,
-          age: player.age,
-        },
+      {
+        profileId: player.profileId,
+        name: player.name,
+        role: 'player',
+        sport: player.sport,
+        avatar: player.avatar,
+        team: player.team,
+        position: player.position,
+        age: player.age,
+      },
         `Hello ${player.name}, I would like to talk about an opportunity.`,
       );
       return;
     }
 
-    Alert.alert('Messaging not allowed', 'Players can only request contact with coaches.');
+    await openDirectConversation(
+      {
+        profileId: player.profileId,
+        name: player.name,
+        role: 'player',
+        sport: player.sport,
+        avatar: player.avatar,
+        team: player.team,
+        position: player.position,
+        age: player.age,
+      },
+      `Hello ${player.name}, I would like to connect.`,
+    );
   };
 
   const handleOfferCoachContact = async (offer: OfferCard) => {
@@ -2888,11 +2687,6 @@ export default function App() {
           messages: [{ from: 'them', body: request.text, isRead: true }],
           conversationId,
           otherProfileId: request.senderId,
-          otherRole: request.otherRole,
-          avatar: request.avatar,
-          team: request.team,
-          position: request.position,
-          age: request.age,
           unreadCount: 0,
         },
         ...removeDuplicateThreads(current, {
@@ -2972,9 +2766,7 @@ export default function App() {
               <Text style={styles.inlineBackText}>Back To Home</Text>
             </Pressable>
             <Text style={styles.title}>
-              {isPasswordRecovery
-                ? 'Reset Password'
-                : role === 'coach'
+              {role === 'coach'
                 ? authMode === 'register'
                   ? 'Coach Registration Form'
                   : 'Coach Login'
@@ -2982,96 +2774,78 @@ export default function App() {
                   ? 'Player Registration Form'
                   : 'Player Login'}
             </Text>
-            {isPasswordRecovery ? (
+            {authMode === 'register' ? input('FULL NAME', form.fullName, (v) => setForm({ ...form, fullName: v })) : null}
+            {input('EMAIL', form.email, (v) => setForm({ ...form, email: v }))}
+            {input('PASSWORD', form.password, (v) => setForm({ ...form, password: v }), true)}
+            {authMode === 'register' ? (
               <>
-                <Text style={styles.cardText}>Enter your new password below.</Text>
-                {input('NEW PASSWORD', form.password, (v) => setForm({ ...form, password: v }), true)}
-              </>
-            ) : (
-              <>
-                {authMode === 'register' ? input('FULL NAME', form.fullName, (v) => setForm({ ...form, fullName: v })) : null}
-                {input('EMAIL', form.email, (v) => setForm({ ...form, email: v }))}
-                {input('PASSWORD', form.password, (v) => setForm({ ...form, password: v }), true)}
-                {authMode === 'register' ? (
+                {input('UNIVERSITY / TEAM', form.team, (v) => setForm({ ...form, team: v }))}
+                <Text style={styles.section}>SPORT OF INTEREST</Text>
+                <View style={styles.pills}>
+                  {sports.map((item) => (
+                    <Pressable
+                      key={item}
+                      style={[styles.pill, sport === item ? styles.pillActive : null]}
+                      onPress={() => setSport(item)}
+                    >
+                      <Text style={[styles.pillText, sport === item ? styles.pillTextActive : null]}>{item.toUpperCase()}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {role === 'player' ? (
                   <>
-                    {input('UNIVERSITY / TEAM', form.team, (v) => setForm({ ...form, team: v }))}
-                    <Text style={styles.section}>SPORT OF INTEREST</Text>
+                    <Text style={styles.section}>GENDER</Text>
                     <View style={styles.pills}>
-                      {sports.map((item) => (
+                      {['female', 'male'].map((gender) => (
                         <Pressable
-                          key={item}
-                          style={[styles.pill, sport === item ? styles.pillActive : null]}
-                          onPress={() => setSport(item)}
+                          key={gender}
+                          style={[styles.pill, form.gender === gender ? styles.pillActive : null]}
+                          onPress={() => setForm({ ...form, gender })}
                         >
-                          <Text style={[styles.pillText, sport === item ? styles.pillTextActive : null]}>{item.toUpperCase()}</Text>
+                          <Text style={[styles.pillText, form.gender === gender ? styles.pillTextActive : null]}>{gender.toUpperCase()}</Text>
                         </Pressable>
                       ))}
                     </View>
-                    {role === 'player' ? (
-                      <>
-                        <Text style={styles.section}>GENDER</Text>
-                        <View style={styles.pills}>
-                          {['female', 'male'].map((gender) => (
-                            <Pressable
-                              key={gender}
-                              style={[styles.pill, form.gender === gender ? styles.pillActive : null]}
-                              onPress={() => setForm({ ...form, gender })}
-                            >
-                              <Text style={[styles.pillText, form.gender === gender ? styles.pillTextActive : null]}>{gender.toUpperCase()}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                        {inputWithSuggestions(
-                          'NATIONALITY',
-                          form.nationality,
-                          (v) => setForm({ ...form, nationality: v }),
-                          nationalitySuggestions,
-                        )}
-                        {input('AGE', form.age, (v) => setForm({ ...form, age: v }))}
-                        <Text style={styles.section}>POSITION</Text>
-                        <View style={styles.pills}>
-                          {positions[sport].map((item) => (
-                            <Pressable
-                              key={item}
-                              style={[styles.pill, form.position === item ? styles.pillActive : null]}
-                              onPress={() => setForm({ ...form, position: item })}
-                            >
-                              <Text style={[styles.pillText, form.position === item ? styles.pillTextActive : null]}>{item}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                        {inputWithSuggestions('CITY', form.city, (v) => setForm({ ...form, city: v }), citySuggestions)}
-                        {inputWithSuggestions('COUNTRY', form.country, (v) => setForm({ ...form, country: v }), countrySuggestions)}
-                        {input('HIGHLIGHTS LINK', form.highlights, (v) => setForm({ ...form, highlights: v }))}
-                      </>
-                    ) : (
-                      <>
-                        {inputWithSuggestions('CITY', form.city, (v) => setForm({ ...form, city: v }), citySuggestions)}
-                        {inputWithSuggestions('COUNTRY', form.country, (v) => setForm({ ...form, country: v }), countrySuggestions)}
-                      </>
+                    {inputWithSuggestions(
+                      'NATIONALITY',
+                      form.nationality,
+                      (v) => setForm({ ...form, nationality: v }),
+                      nationalitySuggestions,
                     )}
+                    {input('AGE', form.age, (v) => setForm({ ...form, age: v }))}
+                    <Text style={styles.section}>POSITION</Text>
+                    <View style={styles.pills}>
+                      {positions[sport].map((item) => (
+                        <Pressable
+                          key={item}
+                          style={[styles.pill, form.position === item ? styles.pillActive : null]}
+                          onPress={() => setForm({ ...form, position: item })}
+                        >
+                          <Text style={[styles.pillText, form.position === item ? styles.pillTextActive : null]}>{item}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    {inputWithSuggestions('CITY', form.city, (v) => setForm({ ...form, city: v }), citySuggestions)}
+                    {inputWithSuggestions('COUNTRY', form.country, (v) => setForm({ ...form, country: v }), countrySuggestions)}
+                    {input('HIGHLIGHTS LINK', form.highlights, (v) => setForm({ ...form, highlights: v }))}
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    {inputWithSuggestions('CITY', form.city, (v) => setForm({ ...form, city: v }), citySuggestions)}
+                    {inputWithSuggestions('COUNTRY', form.country, (v) => setForm({ ...form, country: v }), countrySuggestions)}
+                  </>
+                )}
               </>
-            )}
+            ) : null}
             <Pressable style={styles.darkBtn} onPress={handleAuth} disabled={authBusy}>
-              <Text style={styles.darkBtnText}>
-                {authBusy ? 'PLEASE WAIT' : isPasswordRecovery ? 'Save New Password' : authMode === 'register' ? 'Create An Account' : 'Log In'}
-              </Text>
+              <Text style={styles.darkBtnText}>{authBusy ? 'PLEASE WAIT' : authMode === 'register' ? 'Create An Account' : 'Log In'}</Text>
             </Pressable>
             {authError ? <Text style={styles.errorText}>{authError}</Text> : null}
-            {!isPasswordRecovery && authMode === 'login' ? (
-              <Pressable onPress={() => void handleForgotPassword()}>
-                <Text style={styles.altLink}>Forgot Password?</Text>
-              </Pressable>
-            ) : null}
-            {!isPasswordRecovery ? (
-              <Pressable onPress={() => setAuthMode((current) => (current === 'register' ? 'login' : 'register'))}>
-                <Text style={styles.altLink}>
-                  {authMode === 'register' ? 'Already registered? Log in' : "Don't have an account? Register here"}
-                </Text>
-              </Pressable>
-            ) : null}
+            <Pressable onPress={() => setAuthMode((current) => (current === 'register' ? 'login' : 'register'))}>
+              <Text style={styles.altLink}>
+                {authMode === 'register' ? 'Already registered? Log in' : "Don't have an account? Register here"}
+              </Text>
+            </Pressable>
           </ScrollView>
         ) : null}
 
@@ -3666,37 +3440,6 @@ function playerListCard(
   messageLabel = 'Message Player',
   showViewProfileAction = false,
 ) {
-  if (showViewProfileAction) {
-    return (
-      <View key={player.id} style={styles.personCard}>
-        <View style={styles.avatar}>
-          {player.avatar ? <Image source={{ uri: player.avatar }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{player.name.slice(0, 2)}</Text>}
-        </View>
-        <View style={styles.cardBody}>
-          <Text style={styles.cardName}>{player.name}</Text>
-          <Text style={styles.cardText}>
-            {(player.gender || 'UNSPECIFIED').toUpperCase()} | {player.position} | {player.team} | {player.age} | {player.nationality}
-          </Text>
-          <View style={styles.actionRowSplit}>
-            <Pressable style={styles.lightBtnSmall} onPress={onOpen}>
-              <Text style={styles.lightBtnText}>View Profile</Text>
-            </Pressable>
-            {onMessagePlayer ? (
-              <Pressable
-                style={styles.darkBtnSmall}
-                onPress={() => {
-                  void onMessagePlayer();
-                }}
-              >
-                <Text style={styles.darkBtnText}>{messageLabel}</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      </View>
-    );
-  }
-
   return (
     <Pressable key={player.id} onPress={onOpen} style={styles.personCard}>
       <View style={styles.avatar}>
@@ -3707,17 +3450,18 @@ function playerListCard(
         <Text style={styles.cardText}>
           {(player.gender || 'UNSPECIFIED').toUpperCase()} | {player.position} | {player.team} | {player.age} | {player.nationality}
         </Text>
-        <View style={styles.actionRowCompact}>
-          <Pressable style={styles.lightAction} onPress={onOpenHighlights}>
-            <Text style={styles.lightActionText}>Highlights Video</Text>
-          </Pressable>
+        <View style={showViewProfileAction ? styles.actionRowSplit : styles.actionRowCompact}>
+          {showViewProfileAction ? (
+            <Pressable style={[styles.lightAction, styles.inlineAction]} onPress={onOpen}>
+              <Text style={styles.lightActionText}>View Profile</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.lightAction} onPress={onOpenHighlights}>
+              <Text style={styles.lightActionText}>Highlights Video</Text>
+            </Pressable>
+          )}
           {onMessagePlayer ? (
-            <Pressable
-              style={styles.darkAction}
-              onPress={() => {
-                void onMessagePlayer();
-              }}
-            >
+            <Pressable style={[styles.darkAction, showViewProfileAction ? styles.inlineAction : null]} onPress={onMessagePlayer}>
               <Text style={styles.darkActionText}>{messageLabel}</Text>
             </Pressable>
           ) : null}

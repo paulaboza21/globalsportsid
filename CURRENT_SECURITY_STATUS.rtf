@@ -1,0 +1,82 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Calibri;}}
+\fs24
+\b Global Sports ID Current Security Status\b0\par
+\par
+\b Current status:\b0\par
+The app now has strong security protections across the app, database, backups, and release setup.\par
+\par
+\b 1. Backups and project safety\b0\par
+- Project pushed to GitHub on the clean main branch.\par
+- Local project folder still exists.\par
+- Full backup folder exists: C:\Global\GlobalSportsID-FullBackup\par
+- Source zip backup exists.\par
+- Git bundle backup exists.\par
+- .env is no longer tracked on the pushed branch.\par
+\par
+\b 2. Supabase database security\b0\par
+- Row Level Security enabled on core tables.\par
+- FORCE RLS enabled on core tables.\par
+- Policies created for profiles, contact requests, trials, offers, conversations, conversation members, and messages.\par
+- Same-sport access enforced for profiles, trials, offers, and communication.\par
+- Users can only update their own profile.\par
+- Coaches can only manage their own trials and offers.\par
+- Only conversation members can read messages and conversations.\par
+- Only valid participants can update contact requests.\par
+\par
+\b 3. Database validation and integrity rules\b0\par
+- Profile sport cannot be changed after registration.\par
+- Player profiles require full name, sport, gender, age, and position.\par
+- Coach profiles require full name, sport, and team.\par
+- Email format is validated in the database.\par
+- Invalid ages are rejected.\par
+- Contact requests to self are blocked.\par
+- Cross-sport contact requests are blocked.\par
+- Trial and offer sport must match the coach profile sport.\par
+- Empty messages are blocked.\par
+- Conversations are limited to two members.\par
+- Duplicate direct conversations between the same two users are blocked.\par
+\par
+\b 4. Authentication security\b0\par
+- Email signup is enabled.\par
+- Anonymous sign-in is disabled.\par
+- Manual linking is disabled.\par
+- Email confirmation is enabled.\par
+- App signup flow updated to support email confirmation properly.\par
+- Duplicate email registration now shows: Email already registered.\par
+\par
+\b 5. App behavior protections\b0\par
+- Wrong account type login is blocked.\par
+- Sport-based separation is enforced in app and database.\par
+- Coaches contact players directly.\par
+- Players request coaches first.\par
+- Only accepted request flows become active conversations.\par
+- Unread message state is tracked.\par
+\par
+\b 6. Release configuration safety\b0\par
+- iOS bundle ID set: com.globalsportsid.app\par
+- Android package set: com.globalsportsid.app\par
+- Dark splash/background aligned with the app branding.\par
+- Expo package mismatch warning fixed.\par
+- SafeAreaView migrated to the supported safe-area package.\par
+\par
+\b 7. What still should be kept secure manually\b0\par
+- Keep .env private.\par
+- Never expose the Supabase service role key in the app.\par
+- Turn on 2FA for GitHub, Supabase, Apple Developer, and Google Play.\par
+- Keep USB and offline backups private because they include .env.\par
+- Keep testing with real accounts before launch.\par
+\par
+\b 8. Recommended final checks before launch\b0\par
+- Test a brand-new signup with email confirmation.\par
+- Test duplicate email signup.\par
+- Test player to coach request flow.\par
+- Test coach to player direct messaging.\par
+- Test cross-sport blocking.\par
+- Test logout and fresh login.\par
+- Test on Android emulator and real phone.\par
+- Test a production build before store submission.\par
+\par
+\b Summary\b0\par
+The app is now in a much stronger security state than before. The most important protections are active in the database, the project is backed up, and the app authentication flow is safer for launch.\par
+}
