@@ -32,6 +32,9 @@ type AuthMode = 'login' | 'register';
 type Tab = 'explore' | 'messages' | 'profile';
 type ExploreMode = 'players' | 'coaches' | 'filters' | 'trials' | 'offers' | 'postTrial' | 'postOffer';
 
+const PRIVACY_POLICY_URL = 'https://paulaboza21.github.io/globalsportsid/privacy-policy.html';
+const TERMS_OF_SERVICE_URL = 'https://paulaboza21.github.io/globalsportsid/terms-of-service.html';
+
 type ProfileForm = {
   fullName: string;
   email: string;
@@ -1735,6 +1738,14 @@ export default function App() {
     setForm((current) => ({ ...current, password: '' }));
     setAuthError('Password updated. Log in with your new password.');
     Alert.alert('Password updated', 'Your password has been updated. Log in with your new password.');
+  };
+
+  const handleOpenPrivacyPolicy = async () => {
+    await Linking.openURL(PRIVACY_POLICY_URL);
+  };
+
+  const handleOpenTermsOfService = async () => {
+    await Linking.openURL(TERMS_OF_SERVICE_URL);
   };
 
   const handleForgotPassword = async () => {
@@ -3528,6 +3539,8 @@ export default function App() {
                       () => setIsEditingProfile(true),
                       handleLogout,
                       () => handleHighlightsPress(form.highlights),
+                      handleOpenPrivacyPolicy,
+                      handleOpenTermsOfService,
                     )
                   )
                 ) : (
@@ -3626,6 +3639,14 @@ export default function App() {
                           </Pressable>
                           <Pressable style={styles.lightBtnSmall} onPress={handleLogout}>
                             <Text style={styles.lightBtnText}>Log Out</Text>
+                          </Pressable>
+                        </View>
+                        <View style={styles.profileLegalLinks}>
+                          <Pressable onPress={handleOpenPrivacyPolicy}>
+                            <Text style={styles.profileLegalLink}>Privacy Policy</Text>
+                          </Pressable>
+                          <Pressable onPress={handleOpenTermsOfService}>
+                            <Text style={styles.profileLegalLink}>Terms of Service</Text>
                           </Pressable>
                         </View>
                       </>
@@ -4163,6 +4184,8 @@ function playerProfileCard(
   onEdit: () => void,
   onLogout: () => void,
   onOpenHighlights: () => void,
+  onOpenPrivacyPolicy: () => void,
+  onOpenTermsOfService: () => void,
 ) {
   const statItems = profile.stats
     ? profile.stats.split('|').map((item) => item.trim()).filter(Boolean)
@@ -4209,6 +4232,14 @@ function playerProfileCard(
       <View style={styles.playerProfileActions}>
         {glossyGoldButton('Edit Profile', onEdit, styles.playerPrimaryAction)}
         {glossyGoldButton('Log Out', onLogout, styles.playerPrimaryAction)}
+      </View>
+      <View style={styles.profileLegalLinks}>
+        <Pressable onPress={onOpenPrivacyPolicy}>
+          <Text style={styles.profileLegalLink}>Privacy Policy</Text>
+        </Pressable>
+        <Pressable onPress={onOpenTermsOfService}>
+          <Text style={styles.profileLegalLink}>Terms of Service</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -4826,6 +4857,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'space-between',
+  },
+  profileLegalLinks: {
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 18,
+  },
+  profileLegalLink: {
+    color: colors.goldSoft,
+    fontFamily: 'Montserrat_600SemiBold',
+    fontSize: 13,
+    textDecorationLine: 'underline',
   },
   playerPrimaryAction: {
     flex: 1,
