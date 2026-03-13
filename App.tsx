@@ -2507,9 +2507,38 @@ export default function App() {
   };
 
   const handleOfferCoachContact = async (offer: OfferCard) => {
-    const coach = coachProfiles.find(
+    let coach = coachProfiles.find(
       (item) => item.profileId === offer.coachProfileId || (item.name === offer.coachName && item.sport === offer.sport),
     );
+
+    if (!coach && offer.coachProfileId && isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, team_name, city, country, bio, avatar_url, sport')
+        .eq('id', offer.coachProfileId)
+        .eq('role', 'coach')
+        .single();
+
+      if (error) {
+        Alert.alert('Coach lookup failed', error.message);
+        return;
+      }
+
+      if (data) {
+        coach = {
+          id: data.id,
+          profileId: data.id,
+          sport: (data.sport as Sport) || offer.sport,
+          name: (data.full_name || 'COACH').toUpperCase(),
+          team: data.team_name || 'TEAM',
+          location: [data.city, data.country].filter(Boolean).join(', ').toUpperCase() || 'LOCATION',
+          bio: data.bio || 'Coach profile coming soon.',
+          avatar: data.avatar_url || undefined,
+          trials: [],
+          offers: [],
+        };
+      }
+    }
 
     if (!coach) {
       Alert.alert('Coach not available yet', `${offer.coachName} is not connected to the live database yet.`);
@@ -2878,11 +2907,11 @@ export default function App() {
 
         const { error: requestError } = await supabase
           .from('contact_requests')
-          .update({ status: 'accepted' })
+          .delete()
           .eq('id', request.id);
 
         if (requestError) {
-          Alert.alert('Request update failed', requestError.message);
+          Alert.alert('Request accept failed', requestError.message);
           return;
         }
       }
@@ -3947,7 +3976,7 @@ function offerListCard(
   actionLabel = 'Request Contact',
 ) {
   return (
-    <Pressable key={offer.id} onPress={onOpen} style={styles.personCard}>
+    <View key={offer.id} style={styles.personCard}>
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>{offer.coachName.slice(0, 2)}</Text>
       </View>
@@ -3965,7 +3994,7 @@ function offerListCard(
           </Pressable>
         </View>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
