@@ -2918,7 +2918,7 @@ export default function App() {
 
         const { error: requestError } = await supabase
           .from('contact_requests')
-          .delete()
+          .update({ status: 'accepted' })
           .eq('id', request.id);
 
         if (requestError) {
