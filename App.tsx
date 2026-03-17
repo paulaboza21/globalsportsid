@@ -791,6 +791,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [requestActionBusyId, setRequestActionBusyId] = useState<string | null>(null);
+  const [messagingRefreshKey, setMessagingRefreshKey] = useState(0);
   const [playerFilterDraft, setPlayerFilterDraft] = useState<PlayerFilters>(emptyPlayerFilters);
   const [activePlayerFilters, setActivePlayerFilters] = useState<PlayerFilters>(emptyPlayerFilters);
   const [showCoachFilters, setShowCoachFilters] = useState(false);
@@ -1302,7 +1303,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [session]);
+  }, [messagingRefreshKey, role, session, sport]);
 
   const modeOptions = useMemo(
     () =>
@@ -2316,6 +2317,7 @@ export default function App() {
     ]);
     resetMessageView();
     setSelectedConversationId(nextConversationId);
+    setMessagingRefreshKey((current) => current + 1);
   };
 
   const openCoachConversation = async (coach: CoachCard) => {
@@ -2398,6 +2400,7 @@ export default function App() {
     ]);
     resetMessageView();
     setSelectedConversationId(nextConversationId);
+    setMessagingRefreshKey((current) => current + 1);
   };
 
   const handleMessageProfile = (name: string, openingMessage: string, conversationSport: Sport = sport) => {
@@ -2444,7 +2447,14 @@ export default function App() {
     );
 
     if (requestError) {
-      Alert.alert('Request failed', requestError.message);
+      if (
+        requestError.message.includes('already exists') ||
+        requestError.message.includes('cannot be changed again')
+      ) {
+        Alert.alert('Request already exists', 'This contact request already exists or was already processed.');
+      } else {
+        Alert.alert('Request failed', requestError.message);
+      }
       return false;
     }
 
@@ -2478,6 +2488,7 @@ export default function App() {
     });
     resetMessageView();
     setSelectedConversationId(pendingThreadId);
+    setMessagingRefreshKey((current) => current + 1);
     Alert.alert('Request sent', `Your contact request has been sent to ${recipient.name}.`);
     return true;
   };
@@ -2959,6 +2970,7 @@ export default function App() {
       setSelectedConversationId(conversationId);
       setDraftMessage('');
       setTab('messages');
+      setMessagingRefreshKey((current) => current + 1);
     } finally {
       setRequestActionBusyId(null);
     }
@@ -2986,6 +2998,8 @@ export default function App() {
           Alert.alert('Delete failed', error.message);
           return;
         }
+
+        setMessagingRefreshKey((current) => current + 1);
       }
     } finally {
       setRequestActionBusyId(null);
