@@ -123,6 +123,8 @@ type ConversationThread = {
   age?: string;
 };
 
+type DeleteAccountStep = 'hidden' | 'warning' | 'confirm';
+
 type DirectConversationTarget = {
   profileId?: string;
   name: string;
@@ -817,6 +819,9 @@ export default function App() {
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [requestActionBusyId, setRequestActionBusyId] = useState<string | null>(null);
   const [messagingRefreshKey, setMessagingRefreshKey] = useState(0);
+  const [deleteAccountStep, setDeleteAccountStep] = useState<DeleteAccountStep>('hidden');
+  const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
+  const [deleteAccountBusy, setDeleteAccountBusy] = useState(false);
   const [playerFilterDraft, setPlayerFilterDraft] = useState<PlayerFilters>(emptyPlayerFilters);
   const [activePlayerFilters, setActivePlayerFilters] = useState<PlayerFilters>(emptyPlayerFilters);
   const [showCoachFilters, setShowCoachFilters] = useState(false);
@@ -2103,13 +2108,27 @@ export default function App() {
     }
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const resetDeleteAccountFlow = () => {
+    setDeleteAccountStep('hidden');
+    setDeleteAccountConfirmationText('');
+    setDeleteAccountBusy(false);
+  };
+
+  const resetAppSessionState = () => {
     setSession(null);
+    setAuthBusy(false);
+    setProfileBusy(false);
+    setAuthError('');
+    setIsPasswordRecovery(false);
     setForm(emptyForm);
+    setConversationThreads(initialMessages);
+    setRequestThreads(initialRequestItems);
+    setConversationSearch('');
+    setDraftMessage('');
     setTab('explore');
     setExploreMode('players');
     setSelectedCoachId(null);
+    setSelectedPlayerId(null);
     setSelectedTrialId(null);
     setSelectedOfferId(null);
     setSelectedConversationId(null);
@@ -2117,6 +2136,44 @@ export default function App() {
     setIsEditingProfile(false);
     setPhase('welcome');
     setAuthMode('register');
+    resetDeleteAccountFlow();
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    resetAppSessionState();
+  };
+
+  const handleOpenDeleteAccountWarning = () => {
+    setIsEditingProfile(false);
+    setDeleteAccountStep('warning');
+    setDeleteAccountConfirmationText('');
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!session?.user || !isSupabaseConfigured) {
+      Alert.alert('Account deletion unavailable', 'You need to be signed in to delete your account.');
+      return;
+    }
+
+    if (deleteAccountConfirmationText.trim().toUpperCase() !== 'DELETE') {
+      Alert.alert('Confirmation required', 'Type DELETE to permanently remove your account.');
+      return;
+    }
+
+    setDeleteAccountBusy(true);
+
+    const { error } = await supabase.rpc('delete_my_account');
+
+    if (error) {
+      setDeleteAccountBusy(false);
+      Alert.alert('Account deletion failed', error.message);
+      return;
+    }
+
+    await supabase.auth.signOut();
+    resetAppSessionState();
+    Alert.alert('Account deleted', 'Your account and related data were permanently deleted.');
   };
 
   const selectedPlayer = filteredPlayers.find((player) => player.id === selectedPlayerId) ?? null;
@@ -3571,6 +3628,7 @@ export default function App() {
                       },
                       () => setIsEditingProfile(true),
                       handleLogout,
+                      handleOpenDeleteAccountWarning,
                       () => handleHighlightsPress(form.highlights),
                       handleOpenPrivacyPolicy,
                       handleOpenTermsOfService,
@@ -3674,6 +3732,15 @@ export default function App() {
                             <Text style={styles.lightBtnText}>Log Out</Text>
                           </Pressable>
                         </View>
+                        <View style={styles.profileDangerZone}>
+                          <Text style={styles.profileDangerTitle}>Delete Account</Text>
+                          <Text style={styles.profileDangerText}>
+                            Permanently remove your login, profile, messages, contact requests, trials, offers, and related account data.
+                          </Text>
+                          <Pressable style={styles.deleteAccountButton} onPress={handleOpenDeleteAccountWarning}>
+                            <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
+                          </Pressable>
+                        </View>
                         <View style={styles.profileLegalLinks}>
                           <Pressable onPress={handleOpenPrivacyPolicy}>
                             <Text style={styles.profileLegalLink}>Privacy Policy</Text>
@@ -3686,6 +3753,51 @@ export default function App() {
                     )}
                   </View>
                 )
+              ) : null}
+              {tab === 'profile' && deleteAccountStep !== 'hidden' ? (
+                <View style={styles.deleteAccountOverlay}>
+                  {deleteAccountStep === 'warning' ? (
+                    <View style={styles.deleteAccountCard}>
+                      <Text style={styles.deleteAccountHeading}>Delete Account</Text>
+                      <Text style={styles.deleteAccountBody}>
+                        This permanently deletes your account from Global Sports ID.
+                      </Text>
+                      <Text style={styles.deleteAccountBody}>
+                        You will lose your profile, messages, contact requests, direct conversations, trials, offers, and access to this account.
+                      </Text>
+                      <Text style={styles.deleteAccountBody}>
+                        Any direct message threads involving this account will be permanently removed instead of kept as broken one-person chats.
+                      </Text>
+                      <Text style={styles.deleteAccountBody}>
+                        This action cannot be undone and your account cannot be recovered afterward.
+                      </Text>
+                      <View style={styles.row}>
+                        <Pressable style={styles.lightBtnSmall} onPress={resetDeleteAccountFlow}>
+                          <Text style={styles.lightBtnText}>Cancel</Text>
+                        </Pressable>
+                        <Pressable style={styles.deleteAccountButton} onPress={() => setDeleteAccountStep('confirm')}>
+                          <Text style={styles.deleteAccountButtonText}>Continue</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.deleteAccountCard}>
+                      <Text style={styles.deleteAccountHeading}>Confirm Permanent Deletion</Text>
+                      <Text style={styles.deleteAccountBody}>
+                        Type DELETE to permanently remove your account. This cannot be reversed.
+                      </Text>
+                      {input('TYPE DELETE', deleteAccountConfirmationText, setDeleteAccountConfirmationText)}
+                      <View style={styles.row}>
+                        <Pressable style={styles.lightBtnSmall} onPress={() => setDeleteAccountStep('warning')} disabled={deleteAccountBusy}>
+                          <Text style={styles.lightBtnText}>Back</Text>
+                        </Pressable>
+                        <Pressable style={styles.deleteAccountButton} onPress={handleDeleteAccount} disabled={deleteAccountBusy}>
+                          <Text style={styles.deleteAccountButtonText}>{deleteAccountBusy ? 'Deleting' : 'Delete Permanently'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                </View>
               ) : null}
             </ScrollView>
 
@@ -4216,6 +4328,7 @@ function playerProfileCard(
   },
   onEdit: () => void,
   onLogout: () => void,
+  onDeleteAccount: () => void,
   onOpenHighlights: () => void,
   onOpenPrivacyPolicy: () => void,
   onOpenTermsOfService: () => void,
@@ -4265,6 +4378,15 @@ function playerProfileCard(
       <View style={styles.playerProfileActions}>
         {glossyGoldButton('Edit Profile', onEdit, styles.playerPrimaryAction)}
         {glossyGoldButton('Log Out', onLogout, styles.playerPrimaryAction)}
+      </View>
+      <View style={styles.profileDangerZone}>
+        <Text style={styles.profileDangerTitle}>Delete Account</Text>
+        <Text style={styles.profileDangerText}>
+          Permanently remove your login, player profile, messages, contact requests, conversations, and related account data.
+        </Text>
+        <Pressable style={styles.deleteAccountButton} onPress={onDeleteAccount}>
+          <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
+        </Pressable>
       </View>
       <View style={styles.profileLegalLinks}>
         <Pressable onPress={onOpenPrivacyPolicy}>
@@ -4903,6 +5025,69 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'space-between',
+  },
+  profileDangerZone: {
+    backgroundColor: 'rgba(121, 24, 24, 0.18)',
+    borderColor: 'rgba(214, 96, 96, 0.45)',
+    borderRadius: 22,
+    borderWidth: 1,
+    marginTop: 20,
+    padding: 18,
+  },
+  profileDangerTitle: {
+    color: '#FFB3B3',
+    fontFamily: 'Montserrat_700Bold',
+    fontSize: 16,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  profileDangerText: {
+    color: '#FFD9D9',
+    fontFamily: 'Montserrat_500Medium',
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  deleteAccountOverlay: {
+    backgroundColor: 'rgba(7, 12, 20, 0.92)',
+    borderRadius: 28,
+    marginTop: 18,
+    padding: 18,
+  },
+  deleteAccountCard: {
+    backgroundColor: colors.card,
+    borderColor: 'rgba(214, 96, 96, 0.4)',
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 20,
+  },
+  deleteAccountHeading: {
+    color: '#FFD2D2',
+    fontFamily: 'PlayfairDisplay_700Bold',
+    fontSize: 28,
+    marginBottom: 12,
+  },
+  deleteAccountBody: {
+    color: colors.text,
+    fontFamily: 'Montserrat_500Medium',
+    fontSize: 15,
+    lineHeight: 23,
+    marginBottom: 12,
+  },
+  deleteAccountButton: {
+    alignItems: 'center',
+    backgroundColor: '#8F1D1D',
+    borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  deleteAccountButtonText: {
+    color: '#FFF5F5',
+    fontFamily: 'Montserrat_700Bold',
+    fontSize: 14,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   profileLegalLinks: {
     alignItems: 'center',

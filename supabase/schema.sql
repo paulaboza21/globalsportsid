@@ -633,6 +633,44 @@ begin
 end;
 $$;
 
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  deleting_user_id uuid := auth.uid();
+  affected_conversation_ids uuid[] := '{}';
+begin
+  if deleting_user_id is null then
+    raise exception 'Authenticated user required.';
+  end if;
+
+  select coalesce(array_agg(distinct conversation_id), '{}'::uuid[])
+  into affected_conversation_ids
+  from public.conversation_members
+  where profile_id = deleting_user_id;
+
+  delete from auth.users
+  where id = deleting_user_id;
+
+  if not found then
+    raise exception 'Account not found.';
+  end if;
+
+  if array_length(affected_conversation_ids, 1) is not null then
+    delete from public.conversations
+    where id = any(affected_conversation_ids)
+      and 2 > (
+        select count(*)
+        from public.conversation_members
+        where conversation_members.conversation_id = conversations.id
+      );
+  end if;
+end;
+$$;
+
 drop trigger if exists profiles_set_updated_at on public.profiles;
 create trigger profiles_set_updated_at
 before update on public.profiles
