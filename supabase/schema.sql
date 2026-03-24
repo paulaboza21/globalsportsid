@@ -81,6 +81,15 @@ create table if not exists public.conversation_members (
   primary key (conversation_id, profile_id)
 );
 
+create table if not exists public.direct_conversation_pairs (
+  profile_low uuid not null references public.profiles (id) on delete cascade,
+  profile_high uuid not null references public.profiles (id) on delete cascade,
+  conversation_id uuid not null unique references public.conversations (id) on delete cascade,
+  created_at timestamptz not null default timezone('utc', now()),
+  primary key (profile_low, profile_high),
+  check (profile_low <> profile_high)
+);
+
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   conversation_id uuid not null references public.conversations (id) on delete cascade,
@@ -98,6 +107,9 @@ create index if not exists contact_requests_sender_receiver_idx
 
 create index if not exists conversation_members_profile_idx
   on public.conversation_members (profile_id, conversation_id);
+
+create index if not exists direct_conversation_pairs_conversation_idx
+  on public.direct_conversation_pairs (conversation_id);
 
 create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);
@@ -516,6 +528,111 @@ begin
 end;
 $$;
 
+create or replace function public.get_or_create_direct_conversation(other_profile_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  acting_user uuid := auth.uid();
+  acting_role public.app_role;
+  acting_sport public.sport_type;
+  other_role public.app_role;
+  other_sport public.sport_type;
+  low_profile_id uuid;
+  high_profile_id uuid;
+  existing_conversation_id uuid;
+  new_conversation_id uuid;
+begin
+  if acting_user is null then
+    raise exception 'Authenticated user required.';
+  end if;
+
+  if other_profile_id is null then
+    raise exception 'Other profile is required.';
+  end if;
+
+  if acting_user = other_profile_id then
+    raise exception 'Users cannot message themselves.';
+  end if;
+
+  select role, sport
+  into acting_role, acting_sport
+  from public.profiles
+  where id = acting_user;
+
+  select role, sport
+  into other_role, other_sport
+  from public.profiles
+  where id = other_profile_id;
+
+  if acting_role is null or other_role is null then
+    raise exception 'Both profiles must exist before opening a conversation.';
+  end if;
+
+  if acting_sport is null or other_sport is null then
+    raise exception 'Both profiles must have a sport before opening a conversation.';
+  end if;
+
+  if acting_role = other_role then
+    raise exception 'Conversations are only allowed between a player and a coach.';
+  end if;
+
+  if acting_sport is distinct from other_sport then
+    raise exception 'Conversation members must share the same sport.';
+  end if;
+
+  low_profile_id := least(acting_user, other_profile_id);
+  high_profile_id := greatest(acting_user, other_profile_id);
+
+  perform pg_advisory_xact_lock(hashtext(low_profile_id::text || ':' || high_profile_id::text));
+
+  select direct_conversation_pairs.conversation_id
+  into existing_conversation_id
+  from public.direct_conversation_pairs
+  where profile_low = low_profile_id
+    and profile_high = high_profile_id;
+
+  if existing_conversation_id is not null then
+    return existing_conversation_id;
+  end if;
+
+  select existing_pair.conversation_id
+  into existing_conversation_id
+  from public.conversation_members existing_pair
+  where existing_pair.profile_id in (acting_user, other_profile_id)
+  group by existing_pair.conversation_id
+  having count(distinct existing_pair.profile_id) = 2
+    and count(*) = 2
+  limit 1;
+
+  if existing_conversation_id is not null then
+    insert into public.direct_conversation_pairs (profile_low, profile_high, conversation_id)
+    values (low_profile_id, high_profile_id, existing_conversation_id)
+    on conflict (profile_low, profile_high) do update
+    set conversation_id = excluded.conversation_id;
+
+    return existing_conversation_id;
+  end if;
+
+  insert into public.conversations default values
+  returning id into new_conversation_id;
+
+  insert into public.conversation_members (conversation_id, profile_id)
+  values
+    (new_conversation_id, acting_user),
+    (new_conversation_id, other_profile_id);
+
+  insert into public.direct_conversation_pairs (profile_low, profile_high, conversation_id)
+  values (low_profile_id, high_profile_id, new_conversation_id)
+  on conflict (profile_low, profile_high) do update
+  set conversation_id = excluded.conversation_id;
+
+  return new_conversation_id;
+end;
+$$;
+
 drop trigger if exists profiles_set_updated_at on public.profiles;
 create trigger profiles_set_updated_at
 before update on public.profiles
@@ -594,6 +711,7 @@ alter table public.trials enable row level security;
 alter table public.offers enable row level security;
 alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
+alter table public.direct_conversation_pairs enable row level security;
 alter table public.messages enable row level security;
 
 alter table public.profiles force row level security;
@@ -602,6 +720,7 @@ alter table public.trials force row level security;
 alter table public.offers force row level security;
 alter table public.conversations force row level security;
 alter table public.conversation_members force row level security;
+alter table public.direct_conversation_pairs force row level security;
 alter table public.messages force row level security;
 
 drop policy if exists "profiles_select_same_sport" on public.profiles;
@@ -764,6 +883,13 @@ with check (
     )
   )
 );
+
+drop policy if exists "direct_conversation_pairs_select_participants" on public.direct_conversation_pairs;
+create policy "direct_conversation_pairs_select_participants"
+on public.direct_conversation_pairs
+for select
+to authenticated
+using (profile_low = auth.uid() or profile_high = auth.uid());
 
 drop policy if exists "messages_select_members" on public.messages;
 create policy "messages_select_members"

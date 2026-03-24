@@ -60,6 +60,11 @@ type PlayerFilters = {
   location: string;
 };
 
+type ListingLocationFilter = {
+  query: string;
+  selected: string;
+};
+
 type TrialDraft = {
   team: string;
   location: string;
@@ -112,6 +117,17 @@ type ConversationThread = {
   otherRole?: Role;
   pendingApproval?: boolean;
   unreadCount?: number;
+  avatar?: string;
+  team?: string;
+  position?: string;
+  age?: string;
+};
+
+type DirectConversationTarget = {
+  profileId?: string;
+  name: string;
+  role?: Role;
+  sport: Sport;
   avatar?: string;
   team?: string;
   position?: string;
@@ -237,6 +253,10 @@ function parseOfferDetailsPayload(details: string) {
     ageRange,
     details: detailLine || details,
   };
+}
+
+function normalizeLocationValue(value: string) {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 const worldCities = [
@@ -721,6 +741,11 @@ const emptyPlayerFilters: PlayerFilters = {
   location: '',
 };
 
+const emptyListingLocationFilter: ListingLocationFilter = {
+  query: '',
+  selected: '',
+};
+
 const emptyTrialDraft: TrialDraft = {
   team: '',
   location: '',
@@ -797,6 +822,9 @@ export default function App() {
   const [showCoachFilters, setShowCoachFilters] = useState(false);
   const [trialDraft, setTrialDraft] = useState<TrialDraft>(emptyTrialDraft);
   const [offerDraft, setOfferDraft] = useState<OfferDraft>(emptyOfferDraft);
+  const [trialLocationFilter, setTrialLocationFilter] = useState<ListingLocationFilter>(emptyListingLocationFilter);
+  const [offerLocationFilter, setOfferLocationFilter] = useState<ListingLocationFilter>(emptyListingLocationFilter);
+  const [trialPostLocationFilter, setTrialPostLocationFilter] = useState<ListingLocationFilter>(emptyListingLocationFilter);
 
   useEffect(() => {
     let isMounted = true;
@@ -1268,7 +1296,10 @@ export default function App() {
         };
       });
 
-      const pendingOutgoingThreads: ConversationThread[] = (outgoingRequestRows ?? []).map((row) => {
+      const connectedProfileIds = new Set(remoteThreads.map((thread) => thread.otherProfileId).filter(Boolean));
+      const pendingOutgoingThreads: ConversationThread[] = (outgoingRequestRows ?? [])
+        .filter((row) => !connectedProfileIds.has(row.receiver_id))
+        .map((row) => {
         const receiver = outgoingProfileMap.get(row.receiver_id);
         const note = row.note || 'Contact request sent. Waiting for acceptance.';
 
@@ -1287,7 +1318,7 @@ export default function App() {
           pendingApproval: true,
           unreadCount: 0,
         };
-      });
+        });
 
       const nextThreads = [...pendingOutgoingThreads, ...remoteThreads];
 
@@ -1364,8 +1395,36 @@ export default function App() {
     });
   }, [activePlayerFilters, playerProfiles, sport]);
   const filteredCoaches = useMemo(() => coachProfiles.filter((coach) => coach.sport === sport), [coachProfiles, sport]);
-  const filteredTrials = useMemo(() => trialListings.filter((trial) => trial.sport === sport), [sport, trialListings]);
-  const filteredOffers = useMemo(() => offerListings.filter((offer) => offer.sport === sport), [offerListings, sport]);
+  const filteredTrials = useMemo(
+    () =>
+      trialListings.filter((trial) => {
+        if (trial.sport !== sport) {
+          return false;
+        }
+
+        if (!trialLocationFilter.selected) {
+          return true;
+        }
+
+        return normalizeLocationValue(trial.location) === normalizeLocationValue(trialLocationFilter.selected);
+      }),
+    [sport, trialListings, trialLocationFilter.selected],
+  );
+  const filteredOffers = useMemo(
+    () =>
+      offerListings.filter((offer) => {
+        if (offer.sport !== sport) {
+          return false;
+        }
+
+        if (!offerLocationFilter.selected) {
+          return true;
+        }
+
+        return normalizeLocationValue(offer.location) === normalizeLocationValue(offerLocationFilter.selected);
+      }),
+    [offerListings, offerLocationFilter.selected, sport],
+  );
   const filteredConversations = useMemo(
     () =>
       conversationThreads.filter((thread) => {
@@ -1402,6 +1461,42 @@ export default function App() {
       .filter((city) => city.toLowerCase().includes(query))
       .slice(0, 8);
   }, [playerFilterDraft.location, playerProfiles]);
+
+  const trialLocationSuggestions = useMemo(() => {
+    const query = trialLocationFilter.query.trim().toLowerCase();
+
+    if (!query) {
+      return [];
+    }
+
+    return [...new Set([...trialListings.map((trial) => trial.location).filter(Boolean), ...worldCities])]
+      .filter((location) => location.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [trialListings, trialLocationFilter.query]);
+
+  const offerLocationSuggestions = useMemo(() => {
+    const query = offerLocationFilter.query.trim().toLowerCase();
+
+    if (!query) {
+      return [];
+    }
+
+    return [...new Set([...offerListings.map((offer) => offer.location).filter(Boolean), ...worldCities])]
+      .filter((location) => location.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [offerListings, offerLocationFilter.query]);
+
+  const trialPostLocationSuggestions = useMemo(() => {
+    const query = trialPostLocationFilter.query.trim().toLowerCase();
+
+    if (!query) {
+      return [];
+    }
+
+    return [...new Set([...trialListings.map((trial) => trial.location).filter(Boolean), ...worldCities])]
+      .filter((location) => location.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [trialListings, trialPostLocationFilter.query]);
 
   const citySuggestions = useMemo(() => {
     const query = form.city.trim().toLowerCase();
@@ -1618,21 +1713,6 @@ export default function App() {
     }
 
     return true;
-  };
-
-  const addConversationMembers = async (conversationId: string, profileIds: string[]) => {
-    for (const profileId of profileIds) {
-      const { error } = await supabase.from('conversation_members').insert({
-        conversation_id: conversationId,
-        profile_id: profileId,
-      });
-
-      if (error) {
-        return error;
-      }
-    }
-
-    return null;
   };
 
   const completeAppEntry = () => {
@@ -2142,363 +2222,177 @@ export default function App() {
       return true;
     });
 
-  const ensureConversation = (name: string, openingMessage: string, conversationSport: Sport = sport) => {
-    const existingConversation = conversationThreads.find(
-      (thread) => thread.name === name && thread.sport === conversationSport,
-    );
-
-    if (existingConversation) {
-      resetMessageView();
-      setSelectedConversationId(existingConversation.id);
-      return;
-    }
-
-    const conversationId = `${name.toLowerCase().replace(/\s+/g, '-')}-chat`;
-
+  const openConversationThread = (thread: ConversationThread) => {
     setConversationThreads((current) => [
-      {
-        id: conversationId,
-        name,
-        preview: openingMessage,
-        sport: conversationSport,
-        messages: [{ from: 'them', body: openingMessage, isRead: false }],
-        unreadCount: 1,
-      },
-      ...removeDuplicateThreads(current, { id: conversationId, name, sport: conversationSport }),
+      thread,
+      ...removeDuplicateThreads(current, {
+        id: thread.id,
+        conversationId: thread.conversationId,
+        otherProfileId: thread.otherProfileId,
+        name: thread.name,
+        sport: thread.sport,
+      }),
     ]);
     resetMessageView();
-    setSelectedConversationId(conversationId);
+    setSelectedConversationId(thread.id);
+    setDraftMessage('');
   };
 
-  const openDirectConversation = async (
-    otherProfile: {
-      profileId?: string;
-      name: string;
-      role?: Role;
-      sport: Sport;
-      avatar?: string;
-      team?: string;
-      position?: string;
-      age?: string;
-    },
-    openingMessage: string,
-  ) => {
-    if (otherProfile.role && otherProfile.role === role) {
-      Alert.alert('Messaging not allowed', `A ${role} account cannot message another ${role} account.`);
-      return;
+  const getOrCreateDirectConversationId = async (otherProfileId: string): Promise<string | null> => {
+    if (!session?.user || !isSupabaseConfigured) {
+      return null;
     }
 
-    if (!session?.user || !otherProfile.profileId || !isSupabaseConfigured) {
-      const fallbackConversationId = `${otherProfile.name.toLowerCase().replace(/\s+/g, '-')}-chat`;
+    const { data, error } = await supabase.rpc('get_or_create_direct_conversation', {
+      other_profile_id: otherProfileId,
+    });
 
-      setConversationThreads((current) => [
-        {
-          id: fallbackConversationId,
-          otherProfileId: otherProfile.profileId,
-          otherRole: otherProfile.role,
-          name: otherProfile.name,
-          preview: openingMessage,
-          sport: otherProfile.sport,
-          avatar: otherProfile.avatar,
-          team: otherProfile.team,
-          position: otherProfile.position,
-          age: otherProfile.age,
-          messages: [{ from: 'me', body: openingMessage, isRead: true }],
-          unreadCount: 0,
-        },
-        ...removeDuplicateThreads(current, {
-          id: fallbackConversationId,
-          otherProfileId: otherProfile.profileId,
-          name: otherProfile.name,
-          sport: otherProfile.sport,
-        }),
-      ]);
-      resetMessageView();
-      setSelectedConversationId(fallbackConversationId);
-      return;
+    if (error) {
+      Alert.alert('Conversation setup failed', error.message);
+      return null;
+    }
+
+    return typeof data === 'string' ? data : null;
+  };
+
+  const loadConversationMessages = async (conversationId: string): Promise<MessageEntry[] | null> => {
+    if (!session?.user || !isSupabaseConfigured) {
+      return [];
+    }
+
+    const { data: messageRows, error: messageError } = await supabase
+      .from('messages')
+      .select('id, sender_id, body, is_read')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+
+    if (messageError) {
+      Alert.alert('Conversation lookup failed', messageError.message);
+      return null;
+    }
+
+    return (messageRows ?? []).map((row) => ({
+      id: row.id,
+      from: row.sender_id === session.user.id ? 'me' as const : 'them' as const,
+      body: row.body,
+      isRead: row.sender_id === session.user.id ? true : !!row.is_read,
+    }));
+  };
+
+  const ensureDirectConversationThread = async (
+    otherProfile: DirectConversationTarget,
+    emptyPreview = 'Start your conversation',
+  ): Promise<ConversationThread | null> => {
+    if (otherProfile.role && otherProfile.role === role) {
+      Alert.alert('Messaging not allowed', `A ${role} account cannot message another ${role} account.`);
+      return null;
     }
 
     const existingConversation = findExistingConversation(otherProfile.profileId, otherProfile.name, otherProfile.sport);
-
-    if (existingConversation) {
-      resetMessageView();
-      setSelectedConversationId(existingConversation.id);
-      return;
+    if (existingConversation?.conversationId) {
+      return existingConversation;
     }
 
-    const { data: existingMemberships, error: membershipError } = await supabase
-      .from('conversation_members')
-      .select('conversation_id, profile_id')
-      .in('profile_id', [session.user.id, otherProfile.profileId]);
+    if (!session?.user || !otherProfile.profileId || !isSupabaseConfigured) {
+      const fallbackConversationId = existingConversation?.id ?? `${otherProfile.name.toLowerCase().replace(/\s+/g, '-')}-chat`;
 
-    if (membershipError) {
-      Alert.alert('Conversation lookup failed', membershipError.message);
-      return;
-    }
-
-    const counts = new Map<string, number>();
-    for (const row of existingMemberships ?? []) {
-      counts.set(row.conversation_id, (counts.get(row.conversation_id) ?? 0) + 1);
-    }
-
-    let conversationId = Array.from(counts.entries()).find(([, count]) => count > 1)?.[0] ?? null;
-
-    if (!conversationId) {
-      const { data: conversation, error: conversationError } = await supabase
-        .from('conversations')
-        .insert({})
-        .select('id')
-        .single();
-
-      if (conversationError || !conversation) {
-        Alert.alert('Conversation creation failed', conversationError?.message || 'Unable to create conversation.');
-        return;
-      }
-
-      conversationId = conversation.id;
-
-      const memberInsertError = await addConversationMembers(conversationId!, [session.user.id, otherProfile.profileId]);
-
-      if (memberInsertError) {
-        Alert.alert('Conversation setup failed', memberInsertError.message);
-        return;
-      }
-    }
-
-    const { data: existingMessages, error: existingMessagesError } = await supabase
-      .from('messages')
-      .select('id')
-      .eq('conversation_id', conversationId)
-      .limit(1);
-
-    if (existingMessagesError) {
-      Alert.alert('Conversation lookup failed', existingMessagesError.message);
-      return;
-    }
-
-    if (!existingMessages?.length) {
-      const { error: insertMessageError } = await supabase.from('messages').insert({
-        conversation_id: conversationId,
-        sender_id: session.user.id,
-        body: openingMessage,
-      });
-
-      if (insertMessageError) {
-        Alert.alert('Conversation start failed', insertMessageError.message);
-        return;
-      }
-    }
-
-    const nextConversationId = conversationId ?? `${otherProfile.name.toLowerCase().replace(/\s+/g, '-')}-chat`;
-
-    setConversationThreads((current) => [
-      {
-        id: nextConversationId,
-        conversationId: conversationId ?? undefined,
+      return {
+        id: fallbackConversationId,
         otherProfileId: otherProfile.profileId,
         otherRole: otherProfile.role,
         name: otherProfile.name,
-        preview: openingMessage,
+        preview: existingConversation?.preview || emptyPreview,
         sport: otherProfile.sport,
         avatar: otherProfile.avatar,
         team: otherProfile.team,
         position: otherProfile.position,
         age: otherProfile.age,
-        messages: [{ from: 'me', body: openingMessage, isRead: true }],
-        unreadCount: 0,
-      },
-      ...removeDuplicateThreads(current, {
-        id: nextConversationId,
-        conversationId: conversationId ?? undefined,
-        otherProfileId: otherProfile.profileId,
-        name: otherProfile.name,
-        sport: otherProfile.sport,
-      }),
-    ]);
-    resetMessageView();
-    setSelectedConversationId(nextConversationId);
+        messages: existingConversation?.messages ?? [],
+        unreadCount: existingConversation?.unreadCount ?? 0,
+        pendingApproval: false,
+      };
+    }
+
+    const otherProfileId = otherProfile.profileId;
+    const durableConversationId = await getOrCreateDirectConversationId(otherProfileId);
+    if (!durableConversationId) {
+      Alert.alert('Conversation setup failed', 'Unable to determine the conversation to open.');
+      return null;
+    }
+
+    const messages = await loadConversationMessages(durableConversationId);
+    if (messages === null) {
+      return null;
+    }
+
+    const preview = messages.at(-1)?.body || emptyPreview;
+    const unreadCount = messages.filter((message) => message.from === 'them' && !message.isRead).length;
+
+    return {
+      id: durableConversationId,
+      conversationId: durableConversationId,
+      otherProfileId,
+      otherRole: otherProfile.role,
+      name: otherProfile.name,
+      preview,
+      sport: otherProfile.sport,
+      avatar: otherProfile.avatar,
+      team: otherProfile.team,
+      position: otherProfile.position,
+      age: otherProfile.age,
+      messages,
+      unreadCount,
+      pendingApproval: false,
+    };
+  };
+
+  const openDirectConversation = async (otherProfile: DirectConversationTarget, openingMessage: string) => {
+    const thread = await ensureDirectConversationThread(otherProfile, openingMessage);
+    if (!thread) {
+      return;
+    }
+
+    openConversationThread(thread);
     setMessagingRefreshKey((current) => current + 1);
   };
 
   const openCoachConversation = async (coach: CoachCard) => {
-    if (!session?.user || !coach.profileId) {
-      ensureConversation(coach.name, 'Start your conversation', coach.sport);
-      return;
-    }
-
-    const existingConversation = findExistingConversation(coach.profileId, coach.name, coach.sport);
-
-    if (existingConversation) {
-      resetMessageView();
-      setSelectedConversationId(existingConversation.id);
-      return;
-    }
-
-    let conversationId: string | null = null;
-
-    if (isSupabaseConfigured) {
-      const { data: existingMemberships, error: membershipError } = await supabase
-        .from('conversation_members')
-        .select('conversation_id, profile_id')
-        .in('profile_id', [session.user.id, coach.profileId]);
-
-      if (membershipError) {
-        Alert.alert('Conversation lookup failed', membershipError.message);
-        return;
-      }
-
-      const counts = new Map<string, number>();
-      for (const row of existingMemberships ?? []) {
-        counts.set(row.conversation_id, (counts.get(row.conversation_id) ?? 0) + 1);
-      }
-
-      conversationId = Array.from(counts.entries()).find(([, count]) => count > 1)?.[0] ?? null;
-
-      if (!conversationId) {
-        const { data: conversation, error: conversationError } = await supabase
-          .from('conversations')
-          .insert({})
-          .select('id')
-          .single();
-
-        if (conversationError || !conversation) {
-          Alert.alert('Conversation creation failed', conversationError?.message || 'Unable to create conversation.');
-          return;
-        }
-
-        conversationId = conversation.id;
-
-        const memberInsertError = await addConversationMembers(conversationId!, [session.user.id, coach.profileId]);
-
-        if (memberInsertError) {
-          Alert.alert('Conversation setup failed', memberInsertError.message);
-          return;
-        }
-      }
-    }
-
-    const nextConversationId = conversationId ?? `${coach.name.toLowerCase().replace(/\s+/g, '-')}-chat`;
-
-    setConversationThreads((current) => [
+    await openDirectConversation(
       {
-        id: nextConversationId,
-        conversationId: conversationId ?? undefined,
-        otherProfileId: coach.profileId,
+        profileId: coach.profileId,
         name: coach.name,
-        preview: 'Start your conversation',
+        role: 'coach',
         sport: coach.sport,
-        messages: [],
-        unreadCount: 0,
+        avatar: coach.avatar,
+        team: coach.team,
       },
-      ...removeDuplicateThreads(current, {
-        id: nextConversationId,
-        conversationId: conversationId ?? undefined,
-        otherProfileId: coach.profileId,
-        name: coach.name,
-        sport: coach.sport,
-      }),
-    ]);
-    resetMessageView();
-    setSelectedConversationId(nextConversationId);
-    setMessagingRefreshKey((current) => current + 1);
+      'Start your conversation',
+    );
   };
 
   const handleMessageProfile = (name: string, openingMessage: string, conversationSport: Sport = sport) => {
-    ensureConversation(name, openingMessage, conversationSport);
-  };
-
-  const sendContactRequest = async (
-    recipient: {
-      profileId?: string;
-      name: string;
-      role?: Role;
-      sport: Sport;
-      avatar?: string;
-      team?: string;
-      position?: string;
-      age?: string;
-    },
-    note: string,
-  ) => {
-    if (!session?.user) {
-      Alert.alert('Not signed in', 'Log in first so you can send contact requests.');
-      return false;
-    }
-
-    if (!isSupabaseConfigured) {
-      Alert.alert('Supabase not configured', 'Your project is not connected yet.');
-      return false;
-    }
-
-    if (!recipient.profileId) {
-      Alert.alert('Profile not available yet', `${recipient.name} is not connected to the live database yet.`);
-      return false;
-    }
-
-    const { error: requestError } = await supabase.from('contact_requests').upsert(
-      {
-        sender_id: session.user.id,
-        receiver_id: recipient.profileId,
-        sport,
-        note,
-        status: 'pending',
-      },
-      { onConflict: 'sender_id,receiver_id' },
-    );
-
-    if (requestError) {
-      if (
-        requestError.message.includes('already exists') ||
-        requestError.message.includes('cannot be changed again')
-      ) {
-        Alert.alert('Request already exists', 'This contact request already exists or was already processed.');
-      } else {
-        Alert.alert('Request failed', requestError.message);
-      }
-      return false;
-    }
-
-    const pendingThreadId = `pending-${recipient.profileId}`;
-    setConversationThreads((current) => {
-      const nextThread: ConversationThread = {
-        id: pendingThreadId,
-        name: recipient.name,
-        preview: 'Pending contact request',
-        sport: recipient.sport,
-        otherRole: recipient.role,
-        avatar: recipient.avatar,
-        team: recipient.team,
-        position: recipient.position,
-        age: recipient.age,
-        messages: [{ from: 'me', body: note, isRead: true }],
-        otherProfileId: recipient.profileId,
-        pendingApproval: true,
-        unreadCount: 0,
-      };
-
-      return [
-        nextThread,
-        ...removeDuplicateThreads(current, {
-          id: pendingThreadId,
-          otherProfileId: recipient.profileId,
-          name: recipient.name,
-          sport: recipient.sport,
-        }),
-      ];
+    openConversationThread({
+      id: `${name.toLowerCase().replace(/\s+/g, '-')}-chat`,
+      name,
+      preview: openingMessage,
+      sport: conversationSport,
+      messages: [],
+      unreadCount: 0,
     });
-    resetMessageView();
-    setSelectedConversationId(pendingThreadId);
-    setMessagingRefreshKey((current) => current + 1);
-    Alert.alert('Request sent', `Your contact request has been sent to ${recipient.name}.`);
-    return true;
   };
 
   const handleCoachRequestContact = async (coach: CoachCard) => {
-    if (role !== 'player') {
-      Alert.alert('Players only', 'Contact requests to coaches are sent from player accounts.');
+    if (coach.profileId && coach.profileId === session?.user?.id) {
+      Alert.alert('Your profile', 'You cannot message your own coach profile.');
       return;
     }
-    await sendContactRequest(coach, `Player ${form.fullName || session?.user?.email || 'A player'} requested contact.`);
+
+    if (role !== 'player') {
+      Alert.alert('Players only', 'This contact action is only available from player accounts.');
+      return;
+    }
+
+    await openCoachConversation(coach);
   };
 
   const handlePlayerContact = async (player: PlayerCard) => {
@@ -2567,7 +2461,7 @@ export default function App() {
       return;
     }
 
-    await handleCoachRequestContact(coach);
+    await openCoachConversation(coach);
   };
 
   const handleOpenConversationProfile = (conversation: ConversationThread) => {
@@ -2660,6 +2554,14 @@ export default function App() {
         return;
       }
 
+      if (
+        !trialPostLocationFilter.selected ||
+        normalizeLocationValue(trialDraft.location) !== normalizeLocationValue(trialPostLocationFilter.selected)
+      ) {
+        Alert.alert('Select location', 'Choose an exact location from the suggestions before publishing the trial.');
+        return;
+      }
+
       const nextTrial: TrialCard = {
         id: `trial-${Date.now()}`,
         sport,
@@ -2698,6 +2600,7 @@ export default function App() {
 
       setTrialListings((current) => [{ ...nextTrial, id: nextTrialId }, ...current]);
       setTrialDraft(emptyTrialDraft);
+      setTrialPostLocationFilter(emptyListingLocationFilter);
       setExploreMode('trials');
       Alert.alert('Published', 'Your trial is now live.');
       return;
@@ -2750,6 +2653,7 @@ export default function App() {
   const handleDeleteDraft = (title: string) => {
     if (title === 'Trial') {
       setTrialDraft(emptyTrialDraft);
+      setTrialPostLocationFilter(emptyListingLocationFilter);
     }
 
     if (title === 'Offer') {
@@ -2877,56 +2781,26 @@ export default function App() {
     }
 
     setRequestActionBusyId(requestId);
-
-    const matchingConversation = conversationThreads.find(
-      (thread) => thread.name === request.name && thread.sport === request.sport,
-    );
-    let conversationId = matchingConversation?.conversationId ?? matchingConversation?.id ?? `${requestId}-chat`;
     try {
-      if (session?.user && request.senderId && isSupabaseConfigured) {
-        if (!matchingConversation?.conversationId) {
-          const { data: existingMemberships, error: membershipError } = await supabase
-            .from('conversation_members')
-            .select('conversation_id')
-            .in('profile_id', [session.user.id, request.senderId]);
+      const acceptedThread = await ensureDirectConversationThread(
+        {
+          profileId: request.senderId,
+          name: request.name,
+          role: request.otherRole,
+          sport: request.sport,
+          avatar: request.avatar,
+          team: request.team,
+          position: request.position,
+          age: request.age,
+        },
+        request.text,
+      );
 
-          if (membershipError) {
-            Alert.alert('Conversation lookup failed', membershipError.message);
-            return;
-          }
+      if (!acceptedThread) {
+        return;
+      }
 
-          const counts = new Map<string, number>();
-          for (const row of existingMemberships ?? []) {
-            counts.set(row.conversation_id, (counts.get(row.conversation_id) ?? 0) + 1);
-          }
-
-          const sharedConversationId = Array.from(counts.entries()).find(([, count]) => count > 1)?.[0];
-
-          if (sharedConversationId) {
-            conversationId = sharedConversationId;
-          } else {
-            const { data: conversation, error: conversationError } = await supabase
-              .from('conversations')
-              .insert({})
-              .select('id')
-              .single();
-
-            if (conversationError || !conversation) {
-              Alert.alert('Conversation creation failed', conversationError?.message || 'Unable to create conversation.');
-              return;
-            }
-
-            conversationId = conversation.id;
-
-            const memberInsertError = await addConversationMembers(conversationId, [session.user.id, request.senderId]);
-
-            if (memberInsertError) {
-              Alert.alert('Conversation setup failed', memberInsertError.message);
-              return;
-            }
-          }
-        }
-
+      if (session?.user && isSupabaseConfigured) {
         const { error: requestError } = await supabase
           .from('contact_requests')
           .update({ status: 'accepted' })
@@ -2938,38 +2812,12 @@ export default function App() {
         }
       }
 
-      const acceptedThread: ConversationThread = {
-        id: conversationId,
-        name: request.name,
-        preview: request.text,
-        sport: request.sport,
-        messages: [{ from: 'them', body: request.text, isRead: true }],
-        conversationId,
-        otherProfileId: request.senderId,
-        otherRole: request.otherRole,
-        avatar: request.avatar,
-        team: request.team,
-        position: request.position,
-        age: request.age,
-        unreadCount: 0,
-      };
-
-      setConversationThreads((current) => [
-        acceptedThread,
-        ...removeDuplicateThreads(current, {
-          id: conversationId,
-          conversationId,
-          otherProfileId: request.senderId,
-          name: request.name,
-          sport: request.sport,
-        }),
-      ]);
-
       setRequestThreads((current) => current.filter((item) => item.id !== requestId));
       setShowRequests(false);
-      setSelectedConversationId(conversationId);
-      setDraftMessage('');
-      setTab('messages');
+      openConversationThread({
+        ...acceptedThread,
+        preview: acceptedThread.messages.length ? acceptedThread.preview : request.text,
+      });
       setMessagingRefreshKey((current) => current + 1);
     } finally {
       setRequestActionBusyId(null);
@@ -3341,7 +3189,63 @@ export default function App() {
                   {exploreMode === 'trials'
                     ? selectedTrial
                       ? trialDetailCard(selectedTrial, () => setSelectedTrialId(null))
-                      : filteredTrials.map((trial) => trialListCard(trial, () => setSelectedTrialId(trial.id)))
+                      : (
+                        <>
+                          <View style={styles.box}>
+                            <View style={styles.locationFilterHeader}>
+                              <Text style={styles.section}>Trial Location</Text>
+                              {trialLocationFilter.selected ? (
+                                <Pressable onPress={() => setTrialLocationFilter(emptyListingLocationFilter)} style={styles.lightAction}>
+                                  <Text style={styles.lightActionText}>Clear</Text>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                            <TextInput
+                              value={trialLocationFilter.query}
+                              onChangeText={(value) =>
+                                setTrialLocationFilter({
+                                  query: value,
+                                  selected: '',
+                                })
+                              }
+                              style={styles.input}
+                              placeholder="Type a location"
+                              placeholderTextColor={colors.muted}
+                            />
+                            <View style={styles.line} />
+                            <Text style={styles.filterHint}>
+                              {trialLocationFilter.selected
+                                ? `Showing trials in ${trialLocationFilter.selected}.`
+                                : 'Start typing and select a location to filter trials.'}
+                            </Text>
+                            {trialLocationSuggestions.length ? (
+                              <View style={styles.suggestionList}>
+                                {trialLocationSuggestions.map((location) => (
+                                  <Pressable
+                                    key={location}
+                                    style={styles.suggestionItem}
+                                    onPress={() =>
+                                      setTrialLocationFilter({
+                                        query: location,
+                                        selected: location,
+                                      })
+                                    }
+                                  >
+                                    <Text style={styles.suggestionText}>{location}</Text>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            ) : null}
+                          </View>
+                          {filteredTrials.length
+                            ? filteredTrials.map((trial) => trialListCard(trial, () => setSelectedTrialId(trial.id)))
+                            : (
+                              <View style={styles.box}>
+                                <Text style={styles.cardText}>No trials match that location yet.</Text>
+                              </View>
+                            )}
+                        </>
+                      )
                     : null}
                   {exploreMode === 'offers'
                     ? selectedOffer
@@ -3351,28 +3255,143 @@ export default function App() {
                           () => handleOfferCoachContact(selectedOffer),
                           'Request Contact',
                         )
-                      : filteredOffers.map((offer) =>
-                          offerListCard(
-                            offer,
-                            () => setSelectedOfferId(offer.id),
-                            () => handleOfferCoachContact(offer),
-                            'Request Contact',
-                          ),
-                        )
+                      : (
+                        <>
+                          <View style={styles.box}>
+                            <View style={styles.locationFilterHeader}>
+                              <Text style={styles.section}>Offer Location</Text>
+                              {offerLocationFilter.selected ? (
+                                <Pressable onPress={() => setOfferLocationFilter(emptyListingLocationFilter)} style={styles.lightAction}>
+                                  <Text style={styles.lightActionText}>Clear</Text>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                            <TextInput
+                              value={offerLocationFilter.query}
+                              onChangeText={(value) =>
+                                setOfferLocationFilter({
+                                  query: value,
+                                  selected: '',
+                                })
+                              }
+                              style={styles.input}
+                              placeholder="Type a location"
+                              placeholderTextColor={colors.muted}
+                            />
+                            <View style={styles.line} />
+                            <Text style={styles.filterHint}>
+                              {offerLocationFilter.selected
+                                ? `Showing offers in ${offerLocationFilter.selected}.`
+                                : 'Start typing and select a location to filter offers.'}
+                            </Text>
+                            {offerLocationSuggestions.length ? (
+                              <View style={styles.suggestionList}>
+                                {offerLocationSuggestions.map((location) => (
+                                  <Pressable
+                                    key={location}
+                                    style={styles.suggestionItem}
+                                    onPress={() =>
+                                      setOfferLocationFilter({
+                                        query: location,
+                                        selected: location,
+                                      })
+                                    }
+                                  >
+                                    <Text style={styles.suggestionText}>{location}</Text>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            ) : null}
+                          </View>
+                          {filteredOffers.length
+                            ? filteredOffers.map((offer) =>
+                                offerListCard(
+                                  offer,
+                                  () => setSelectedOfferId(offer.id),
+                                  () => handleOfferCoachContact(offer),
+                                  'Request Contact',
+                                ),
+                              )
+                            : (
+                              <View style={styles.box}>
+                                <Text style={styles.cardText}>No offers match that location yet.</Text>
+                              </View>
+                            )}
+                        </>
+                      )
                     : null}
                   {exploreMode === 'postTrial'
-                    ? formCard(
-                        'POST A TRIAL',
-                        [
-                          ['TEAM', trialDraft.team, (value) => setTrialDraft((current) => ({ ...current, team: value }))],
-                          ['LOCATION', trialDraft.location, (value) => setTrialDraft((current) => ({ ...current, location: value }))],
-                          ['TIME', trialDraft.time, (value) => setTrialDraft((current) => ({ ...current, time: value }))],
-                          ['DETAILS', trialDraft.details, (value) => setTrialDraft((current) => ({ ...current, details: value }))],
-                          ['REGISTRATION LINK', trialDraft.registrationLink, (value) => setTrialDraft((current) => ({ ...current, registrationLink: value }))],
-                        ],
-                        () => handlePublishDraft('Trial'),
-                        () => handleDeleteDraft('Trial'),
-                      )
+                    ? (
+                      <View style={styles.box}>
+                        <Text style={styles.section}>POST A TRIAL</Text>
+                        {input('TEAM', trialDraft.team, (value) => setTrialDraft((current) => ({ ...current, team: value })))}
+                        <View style={styles.inputBox}>
+                          <View style={styles.locationFilterHeader}>
+                            <Text style={styles.inputLabel}>LOCATION</Text>
+                            {trialPostLocationFilter.selected ? (
+                              <Pressable
+                                onPress={() => {
+                                  setTrialPostLocationFilter(emptyListingLocationFilter);
+                                  setTrialDraft((current) => ({ ...current, location: '' }));
+                                }}
+                                style={styles.lightAction}
+                              >
+                                <Text style={styles.lightActionText}>Clear</Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
+                          <TextInput
+                            value={trialPostLocationFilter.query}
+                            onChangeText={(value) => {
+                              setTrialPostLocationFilter({
+                                query: value,
+                                selected: '',
+                              });
+                              setTrialDraft((current) => ({ ...current, location: value }));
+                            }}
+                            style={styles.input}
+                            placeholder="Type and choose an exact location"
+                            placeholderTextColor={colors.muted}
+                          />
+                          <View style={styles.line} />
+                          <Text style={styles.filterHint}>
+                            {trialPostLocationFilter.selected
+                              ? `Selected location: ${trialPostLocationFilter.selected}.`
+                              : 'Coaches must choose an exact location from the suggestions below.'}
+                          </Text>
+                          {trialPostLocationSuggestions.length ? (
+                            <View style={styles.suggestionList}>
+                              {trialPostLocationSuggestions.map((location) => (
+                                <Pressable
+                                  key={location}
+                                  style={styles.suggestionItem}
+                                  onPress={() => {
+                                    setTrialPostLocationFilter({
+                                      query: location,
+                                      selected: location,
+                                    });
+                                    setTrialDraft((current) => ({ ...current, location }));
+                                  }}
+                                >
+                                  <Text style={styles.suggestionText}>{location}</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          ) : null}
+                        </View>
+                        {input('TIME', trialDraft.time, (value) => setTrialDraft((current) => ({ ...current, time: value })))}
+                        {input('DETAILS', trialDraft.details, (value) => setTrialDraft((current) => ({ ...current, details: value })))}
+                        {input('REGISTRATION LINK', trialDraft.registrationLink, (value) => setTrialDraft((current) => ({ ...current, registrationLink: value })))}
+                        <View style={styles.row}>
+                          <Pressable style={styles.darkBtnSmall} onPress={() => handlePublishDraft('Trial')}>
+                            <Text style={styles.darkBtnText}>Publish</Text>
+                          </Pressable>
+                          <Pressable style={styles.lightBtnSmall} onPress={() => handleDeleteDraft('Trial')}>
+                            <Text style={styles.lightBtnText}>Delete</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    )
                     : null}
                   {exploreMode === 'postOffer'
                     ? formCard(
@@ -4610,6 +4629,12 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   inlineFilterSpacer: { height: 16 },
+  locationFilterHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   cardName: {
     color: colors.goldSoft,
     fontFamily: 'Montserrat_700Bold',
@@ -4725,6 +4750,13 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   cityHint: { color: colors.text, fontFamily: 'Montserrat_500Medium', fontSize: 14, marginBottom: 8, opacity: 0.9 },
+  filterHint: {
+    color: colors.muted,
+    fontFamily: 'Montserrat_500Medium',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 10,
+  },
   suggestionList: {
     backgroundColor: colors.card,
     borderColor: colors.border,
