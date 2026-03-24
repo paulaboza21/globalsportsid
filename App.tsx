@@ -3735,7 +3735,7 @@ export default function App() {
                         <View style={styles.profileDangerZone}>
                           <Text style={styles.profileDangerTitle}>Delete Account</Text>
                           <Text style={styles.profileDangerText}>
-                            Permanently remove your login, profile, messages, contact requests, trials, offers, and related account data.
+                            Permanently remove your account and related data.
                           </Text>
                           <Pressable style={styles.deleteAccountButton} onPress={handleOpenDeleteAccountWarning}>
                             <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
@@ -4382,7 +4382,7 @@ function playerProfileCard(
       <View style={styles.profileDangerZone}>
         <Text style={styles.profileDangerTitle}>Delete Account</Text>
         <Text style={styles.profileDangerText}>
-          Permanently remove your login, player profile, messages, contact requests, conversations, and related account data.
+          Permanently remove your account and related data.
         </Text>
         <Pressable style={styles.deleteAccountButton} onPress={onDeleteAccount}>
           <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
@@ -5027,25 +5027,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   profileDangerZone: {
-    backgroundColor: 'rgba(121, 24, 24, 0.18)',
-    borderColor: 'rgba(214, 96, 96, 0.45)',
-    borderRadius: 22,
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderColor: 'rgba(214, 96, 96, 0.22)',
+    borderRadius: 16,
     borderWidth: 1,
-    marginTop: 20,
-    padding: 18,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   profileDangerTitle: {
-    color: '#FFB3B3',
-    fontFamily: 'Montserrat_700Bold',
-    fontSize: 16,
-    marginBottom: 8,
-    textTransform: 'uppercase',
+    color: 'rgba(255, 214, 214, 0.92)',
+    fontFamily: 'Montserrat_600SemiBold',
+    fontSize: 13,
+    marginBottom: 4,
   },
   profileDangerText: {
-    color: '#FFD9D9',
+    color: 'rgba(255, 240, 240, 0.72)',
     fontFamily: 'Montserrat_500Medium',
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 12,
+    lineHeight: 18,
   },
   deleteAccountOverlay: {
     backgroundColor: 'rgba(7, 12, 20, 0.92)',
@@ -5075,19 +5076,21 @@ const styles = StyleSheet.create({
   },
   deleteAccountButton: {
     alignItems: 'center',
-    backgroundColor: '#8F1D1D',
+    backgroundColor: 'transparent',
+    borderColor: 'rgba(214, 96, 96, 0.35)',
     borderRadius: 999,
+    borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    marginTop: 10,
+    minHeight: 34,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
   deleteAccountButtonText: {
-    color: '#FFF5F5',
-    fontFamily: 'Montserrat_700Bold',
-    fontSize: 14,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
+    color: '#F2AAAA',
+    fontFamily: 'Montserrat_600SemiBold',
+    fontSize: 12,
+    letterSpacing: 0.2,
   },
   profileLegalLinks: {
     alignItems: 'center',
