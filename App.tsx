@@ -7,11 +7,10 @@ import { PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import type { Session, User } from '@supabase/supabase-js';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Image,
   Linking,
   PanResponder,
@@ -1225,18 +1224,6 @@ export default function App() {
       }
       const outgoingReceiverIds = [...new Set((outgoingRequestRows ?? []).map((row) => row.receiver_id))];
       const conversationIds = membershipRows?.map((row) => row.conversation_id) ?? [];
-      const { data: hiddenConversationRows, error: hiddenConversationError } =
-        conversationIds.length > 0
-          ? await supabase
-              .from('hidden_conversations')
-              .select('conversation_id')
-              .eq('profile_id', userId)
-              .in('conversation_id', conversationIds)
-          : { data: [], error: null };
-
-      if (hiddenConversationError) {
-        console.error('load hidden conversations error', hiddenConversationError);
-      }
       const { data: memberRows } =
         conversationIds.length > 0
           ? await supabase
@@ -1292,10 +1279,7 @@ export default function App() {
         grouped.set(row.conversation_id, current);
       }
 
-      const hiddenConversationIds = new Set((hiddenConversationRows ?? []).map((row) => row.conversation_id));
-      const visibleConversationIds = conversationIds.filter((conversationId) => !hiddenConversationIds.has(conversationId));
-
-      const remoteThreads: ConversationThread[] = visibleConversationIds.map((conversationId) => {
+      const remoteThreads: ConversationThread[] = conversationIds.map((conversationId) => {
         const rows = grouped.get(conversationId) ?? [];
         const otherProfileId = conversationToOther.get(conversationId);
         const otherProfile = otherProfileId ? profileMap.get(otherProfileId) : null;
@@ -2267,34 +2251,6 @@ export default function App() {
     }
   };
 
-  const handleHideConversation = async (conversationId: string) => {
-    const thread = conversationThreads.find((item) => item.id === conversationId);
-    if (!thread) {
-      return;
-    }
-
-    setConversationThreads((current) => current.filter((item) => item.id !== conversationId));
-    if (selectedConversationId === conversationId) {
-      setSelectedConversationId(null);
-      setDraftMessage('');
-    }
-
-    if (!session?.user || !thread.conversationId || !isSupabaseConfigured) {
-      return;
-    }
-
-    const { error } = await supabase.from('hidden_conversations').upsert({
-      conversation_id: thread.conversationId,
-      profile_id: session.user.id,
-    });
-
-    if (error) {
-      console.error('hide conversation error', error);
-      Alert.alert('Delete chat failed', error.message);
-      setMessagingRefreshKey((current) => current + 1);
-    }
-  };
-
   const resetMessageView = () => {
     setTab('messages');
     setShowRequests(false);
@@ -2302,22 +2258,6 @@ export default function App() {
 
   const findPendingRequestThread = (otherProfileId?: string) =>
     conversationThreads.find((thread) => thread.pendingApproval && otherProfileId && thread.otherProfileId === otherProfileId);
-
-  const restoreConversationVisibility = async (conversationId?: string) => {
-    if (!conversationId || !session?.user || !isSupabaseConfigured) {
-      return;
-    }
-
-    const { error } = await supabase
-      .from('hidden_conversations')
-      .delete()
-      .eq('conversation_id', conversationId)
-      .eq('profile_id', session.user.id);
-
-    if (error) {
-      console.error('restore conversation visibility error', error);
-    }
-  };
 
   const lookupSharedConversationId = async (otherProfileId: string): Promise<string | null> => {
     if (!session?.user || !isSupabaseConfigured) {
@@ -2412,7 +2352,6 @@ export default function App() {
     });
 
   const openConversationThread = (thread: ConversationThread) => {
-    void restoreConversationVisibility(thread.conversationId);
     setConversationThreads((current) => [
       thread,
       ...removeDuplicateThreads(current, {
@@ -2469,19 +2408,11 @@ export default function App() {
     }));
   };
 
-  const loadExistingDirectConversationThread = async (
+  const buildDirectConversationThread = async (
     otherProfile: DirectConversationTarget,
+    conversationId: string,
     emptyPreview = 'Start your conversation',
   ): Promise<ConversationThread | null> => {
-    if (!otherProfile.profileId) {
-      return null;
-    }
-
-    const conversationId = await lookupSharedConversationId(otherProfile.profileId);
-    if (!conversationId) {
-      return null;
-    }
-
     const messages = await loadConversationMessages(conversationId);
     if (messages === null) {
       return null;
@@ -2506,6 +2437,22 @@ export default function App() {
       unreadCount,
       pendingApproval: false,
     };
+  };
+
+  const loadExistingDirectConversationThread = async (
+    otherProfile: DirectConversationTarget,
+    emptyPreview = 'Start your conversation',
+  ): Promise<ConversationThread | null> => {
+    if (!otherProfile.profileId) {
+      return null;
+    }
+
+    const conversationId = await lookupSharedConversationId(otherProfile.profileId);
+    if (!conversationId) {
+      return null;
+    }
+
+    return buildDirectConversationThread(otherProfile, conversationId, emptyPreview);
   };
 
   const ensureDirectConversationThread = async (
@@ -2642,6 +2589,29 @@ export default function App() {
 
     setMessagingRefreshKey((current) => current + 1);
     return data as PairRequestState;
+  };
+
+  const acceptContactRequest = async (requestId: string): Promise<string | null> => {
+    if (!session?.user) {
+      Alert.alert('Not signed in', 'Log in first so you can accept requests.');
+      return null;
+    }
+
+    if (!isSupabaseConfigured) {
+      Alert.alert('Supabase not configured', 'Your project is not connected yet.');
+      return null;
+    }
+
+    const { data, error } = await supabase.rpc('accept_contact_request', {
+      request_id: requestId,
+    });
+
+    if (error) {
+      Alert.alert('Request accept failed', error.message);
+      return null;
+    }
+
+    return typeof data === 'string' ? data : null;
   };
 
   const openPendingRequestForProfile = (
@@ -3146,7 +3116,12 @@ export default function App() {
 
     setRequestActionBusyId(requestId);
     try {
-      const acceptedThread = await ensureDirectConversationThread(
+      const acceptedConversationId = await acceptContactRequest(request.id);
+      if (!acceptedConversationId) {
+        return;
+      }
+
+      const acceptedThread = await buildDirectConversationThread(
         {
           profileId: request.senderId,
           name: request.name,
@@ -3157,23 +3132,12 @@ export default function App() {
           position: request.position,
           age: request.age,
         },
+        acceptedConversationId,
         request.text,
       );
 
       if (!acceptedThread) {
         return;
-      }
-
-      if (session?.user && isSupabaseConfigured) {
-        const { error: requestError } = await supabase
-          .from('contact_requests')
-          .update({ status: 'accepted' })
-          .eq('id', request.id);
-
-        if (requestError) {
-          Alert.alert('Request accept failed', requestError.message);
-          return;
-        }
       }
 
       setRequestThreads((current) => current.filter((item) => item.id !== requestId));
@@ -3830,7 +3794,6 @@ export default function App() {
                             <ConversationCardRow
                               key={item.id}
                               conversation={item}
-                              onDelete={item.conversationId ? () => void handleHideConversation(item.id) : undefined}
                               onOpen={() => handleOpenConversation(item.id)}
                             />
                           ))
@@ -4519,88 +4482,27 @@ function offerDetailCard(
 
 function ConversationCardRow({
   conversation,
-  onDelete,
   onOpen,
 }: {
   conversation: ConversationThread;
-  onDelete?: () => void;
   onOpen: () => void;
 }) {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gestureState) =>
-        !!onDelete && gestureState.dx > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy),
-      onPanResponderMove: (_, gestureState) => {
-        if (!onDelete) {
-          return;
-        }
-
-        translateX.setValue(Math.min(Math.max(gestureState.dx, 0), 108));
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (!onDelete) {
-          return;
-        }
-
-        if (gestureState.dx >= 84) {
-          Animated.timing(translateX, {
-            duration: 120,
-            toValue: 132,
-            useNativeDriver: true,
-          }).start(() => {
-            translateX.setValue(0);
-            onDelete();
-          });
-          return;
-        }
-
-        Animated.spring(translateX, {
-          bounciness: 6,
-          speed: 16,
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
-      },
-      onPanResponderTerminate: () => {
-        Animated.spring(translateX, {
-          bounciness: 6,
-          speed: 16,
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
-      },
-    }),
-  ).current;
-
   return (
-    <View style={styles.swipeConversationShell}>
-      {onDelete ? (
-        <View style={styles.swipeDeleteBackground}>
-          <Text style={styles.swipeDeleteLabel}>Delete Chat</Text>
+    <Pressable onPress={onOpen} style={styles.personCard}>
+      <View style={styles.avatar}>
+        <Text style={styles.avatarText}>{conversation.name.slice(0, 2)}</Text>
+      </View>
+      <View style={styles.cardBody}>
+        <Text style={styles.cardName}>{conversation.name}</Text>
+        <View style={styles.conversationPreviewRow}>
+          <Text style={[styles.cardText, conversation.unreadCount ? styles.unreadConversationText : null]}>{conversation.preview}</Text>
+          {conversation.unreadCount ? <View style={styles.unreadDot} /> : null}
         </View>
-      ) : null}
-      <Animated.View
-        {...(onDelete ? panResponder.panHandlers : {})}
-        style={[styles.swipeConversationContent, { transform: [{ translateX }] }]}
-      >
-        <Pressable onPress={onOpen} style={styles.personCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{conversation.name.slice(0, 2)}</Text>
-          </View>
-          <View style={styles.cardBody}>
-            <Text style={styles.cardName}>{conversation.name}</Text>
-            <View style={styles.conversationPreviewRow}>
-              <Text style={[styles.cardText, conversation.unreadCount ? styles.unreadConversationText : null]}>{conversation.preview}</Text>
-              {conversation.unreadCount ? <View style={styles.unreadDot} /> : null}
-            </View>
-            <Pressable style={styles.lightAction} onPress={onOpen}>
-              <Text style={styles.lightActionText}>Open Chat</Text>
-            </Pressable>
-          </View>
+        <Pressable style={styles.lightAction} onPress={onOpen}>
+          <Text style={styles.lightActionText}>Open Chat</Text>
         </Pressable>
-      </Animated.View>
-    </View>
+      </View>
+    </Pressable>
   );
 }
 
@@ -5086,33 +4988,6 @@ const styles = StyleSheet.create({
   },
   cardBody: { flex: 1, gap: 6, paddingTop: 2 },
   conversationPreviewRow: { alignItems: 'center', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
-  swipeConversationShell: {
-    marginBottom: 12,
-    position: 'relative',
-  },
-  swipeConversationContent: {
-    position: 'relative',
-    zIndex: 2,
-  },
-  swipeDeleteBackground: {
-    alignItems: 'flex-end',
-    backgroundColor: 'rgba(143, 29, 29, 0.9)',
-    borderRadius: 22,
-    bottom: 0,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    width: 148,
-  },
-  swipeDeleteLabel: {
-    color: '#FFF1F1',
-    fontFamily: 'Montserrat_700Bold',
-    fontSize: 12,
-    letterSpacing: 0.35,
-    textTransform: 'uppercase',
-  },
   conversationHeaderPressable: {
     alignItems: 'center',
     marginBottom: 6,

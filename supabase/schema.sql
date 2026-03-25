@@ -90,12 +90,7 @@ create table if not exists public.direct_conversation_pairs (
   check (profile_low <> profile_high)
 );
 
-create table if not exists public.hidden_conversations (
-  conversation_id uuid not null references public.conversations (id) on delete cascade,
-  profile_id uuid not null references public.profiles (id) on delete cascade,
-  hidden_at timestamptz not null default timezone('utc', now()),
-  primary key (conversation_id, profile_id)
-);
+drop table if exists public.hidden_conversations cascade;
 
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
@@ -117,9 +112,6 @@ create index if not exists conversation_members_profile_idx
 
 create index if not exists direct_conversation_pairs_conversation_idx
   on public.direct_conversation_pairs (conversation_id);
-
-create index if not exists hidden_conversations_profile_idx
-  on public.hidden_conversations (profile_id, hidden_at desc);
 
 create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);
@@ -662,6 +654,60 @@ begin
 end;
 $$;
 
+create or replace function public.accept_contact_request(request_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  acting_user uuid := auth.uid();
+  request_row public.contact_requests%rowtype;
+  conversation_id uuid;
+begin
+  if acting_user is null then
+    raise exception 'Authenticated user required.';
+  end if;
+
+  if request_id is null then
+    raise exception 'Request id is required.';
+  end if;
+
+  update public.contact_requests
+  set status = 'accepted'
+  where id = request_id
+    and receiver_id = acting_user
+    and status = 'pending'
+  returning *
+  into request_row;
+
+  if request_row.id is null then
+    select *
+    into request_row
+    from public.contact_requests
+    where id = request_id;
+
+    if request_row.id is null then
+      raise exception 'Contact request not found.';
+    end if;
+
+    if request_row.receiver_id <> acting_user then
+      raise exception 'Only the receiving coach can accept this request.';
+    end if;
+
+    if request_row.status = 'accepted' then
+      conversation_id := public.get_or_create_direct_conversation(request_row.sender_id);
+      return conversation_id;
+    end if;
+
+    raise exception 'Only pending contact requests can be accepted.';
+  end if;
+
+  conversation_id := public.get_or_create_direct_conversation(request_row.sender_id);
+  return conversation_id;
+end;
+$$;
+
 create or replace function public.delete_my_account()
 returns void
 language plpgsql
@@ -779,7 +825,6 @@ alter table public.offers enable row level security;
 alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 alter table public.direct_conversation_pairs enable row level security;
-alter table public.hidden_conversations enable row level security;
 alter table public.messages enable row level security;
 
 alter table public.profiles force row level security;
@@ -789,7 +834,6 @@ alter table public.offers force row level security;
 alter table public.conversations force row level security;
 alter table public.conversation_members force row level security;
 alter table public.direct_conversation_pairs force row level security;
-alter table public.hidden_conversations force row level security;
 alter table public.messages force row level security;
 
 drop policy if exists "profiles_select_same_sport" on public.profiles;
@@ -959,27 +1003,6 @@ on public.direct_conversation_pairs
 for select
 to authenticated
 using (profile_low = auth.uid() or profile_high = auth.uid());
-
-drop policy if exists "hidden_conversations_select_own" on public.hidden_conversations;
-create policy "hidden_conversations_select_own"
-on public.hidden_conversations
-for select
-to authenticated
-using (profile_id = auth.uid());
-
-drop policy if exists "hidden_conversations_insert_own" on public.hidden_conversations;
-create policy "hidden_conversations_insert_own"
-on public.hidden_conversations
-for insert
-to authenticated
-with check (profile_id = auth.uid() and public.is_conversation_member(conversation_id));
-
-drop policy if exists "hidden_conversations_delete_own" on public.hidden_conversations;
-create policy "hidden_conversations_delete_own"
-on public.hidden_conversations
-for delete
-to authenticated
-using (profile_id = auth.uid());
 
 drop policy if exists "messages_select_members" on public.messages;
 create policy "messages_select_members"
