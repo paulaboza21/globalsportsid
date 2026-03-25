@@ -7,10 +7,11 @@ import { PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import type { Session, User } from '@supabase/supabase-js';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Linking,
   PanResponder,
@@ -135,6 +136,14 @@ type DirectConversationTarget = {
   position?: string;
   age?: string;
 };
+
+type PairRequestState = {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  status: 'pending' | 'accepted' | 'declined';
+  note: string | null;
+} | null;
 
 const isCrossRoleConversation = (currentRole: Role, otherRole?: Role) => {
   if (!otherRole) {
@@ -1216,6 +1225,18 @@ export default function App() {
       }
       const outgoingReceiverIds = [...new Set((outgoingRequestRows ?? []).map((row) => row.receiver_id))];
       const conversationIds = membershipRows?.map((row) => row.conversation_id) ?? [];
+      const { data: hiddenConversationRows, error: hiddenConversationError } =
+        conversationIds.length > 0
+          ? await supabase
+              .from('hidden_conversations')
+              .select('conversation_id')
+              .eq('profile_id', userId)
+              .in('conversation_id', conversationIds)
+          : { data: [], error: null };
+
+      if (hiddenConversationError) {
+        console.error('load hidden conversations error', hiddenConversationError);
+      }
       const { data: memberRows } =
         conversationIds.length > 0
           ? await supabase
@@ -1271,7 +1292,10 @@ export default function App() {
         grouped.set(row.conversation_id, current);
       }
 
-      const remoteThreads: ConversationThread[] = conversationIds.map((conversationId) => {
+      const hiddenConversationIds = new Set((hiddenConversationRows ?? []).map((row) => row.conversation_id));
+      const visibleConversationIds = conversationIds.filter((conversationId) => !hiddenConversationIds.has(conversationId));
+
+      const remoteThreads: ConversationThread[] = visibleConversationIds.map((conversationId) => {
         const rows = grouped.get(conversationId) ?? [];
         const otherProfileId = conversationToOther.get(conversationId);
         const otherProfile = otherProfileId ? profileMap.get(otherProfileId) : null;
@@ -2243,9 +2267,117 @@ export default function App() {
     }
   };
 
+  const handleHideConversation = async (conversationId: string) => {
+    const thread = conversationThreads.find((item) => item.id === conversationId);
+    if (!thread) {
+      return;
+    }
+
+    setConversationThreads((current) => current.filter((item) => item.id !== conversationId));
+    if (selectedConversationId === conversationId) {
+      setSelectedConversationId(null);
+      setDraftMessage('');
+    }
+
+    if (!session?.user || !thread.conversationId || !isSupabaseConfigured) {
+      return;
+    }
+
+    const { error } = await supabase.from('hidden_conversations').upsert({
+      conversation_id: thread.conversationId,
+      profile_id: session.user.id,
+    });
+
+    if (error) {
+      console.error('hide conversation error', error);
+      Alert.alert('Delete chat failed', error.message);
+      setMessagingRefreshKey((current) => current + 1);
+    }
+  };
+
   const resetMessageView = () => {
     setTab('messages');
     setShowRequests(false);
+  };
+
+  const findPendingRequestThread = (otherProfileId?: string) =>
+    conversationThreads.find((thread) => thread.pendingApproval && otherProfileId && thread.otherProfileId === otherProfileId);
+
+  const restoreConversationVisibility = async (conversationId?: string) => {
+    if (!conversationId || !session?.user || !isSupabaseConfigured) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('hidden_conversations')
+      .delete()
+      .eq('conversation_id', conversationId)
+      .eq('profile_id', session.user.id);
+
+    if (error) {
+      console.error('restore conversation visibility error', error);
+    }
+  };
+
+  const lookupSharedConversationId = async (otherProfileId: string): Promise<string | null> => {
+    if (!session?.user || !isSupabaseConfigured) {
+      return null;
+    }
+
+    const sortedIds = [session.user.id, otherProfileId].sort();
+    const { data: pairRow, error: pairError } = await supabase
+      .from('direct_conversation_pairs')
+      .select('conversation_id')
+      .eq('profile_low', sortedIds[0])
+      .eq('profile_high', sortedIds[1])
+      .maybeSingle();
+
+    if (pairError) {
+      Alert.alert('Conversation lookup failed', pairError.message);
+      return null;
+    }
+
+    if (pairRow?.conversation_id) {
+      return pairRow.conversation_id;
+    }
+
+    const { data: existingMemberships, error: membershipError } = await supabase
+      .from('conversation_members')
+      .select('conversation_id, profile_id')
+      .in('profile_id', [session.user.id, otherProfileId]);
+
+    if (membershipError) {
+      Alert.alert('Conversation lookup failed', membershipError.message);
+      return null;
+    }
+
+    const counts = new Map<string, number>();
+    for (const row of existingMemberships ?? []) {
+      counts.set(row.conversation_id, (counts.get(row.conversation_id) ?? 0) + 1);
+    }
+
+    return Array.from(counts.entries()).find(([, count]) => count === 2)?.[0] ?? null;
+  };
+
+  const lookupPairRequestState = async (otherProfileId: string): Promise<PairRequestState> => {
+    if (!session?.user || !isSupabaseConfigured) {
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('contact_requests')
+      .select('id, sender_id, receiver_id, status, note')
+      .in('sender_id', [session.user.id, otherProfileId])
+      .in('receiver_id', [session.user.id, otherProfileId])
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      Alert.alert('Contact lookup failed', error.message);
+      return null;
+    }
+
+    return (data?.[0] as PairRequestState) ?? null;
   };
 
   const findExistingConversation = (otherProfileId?: string, name?: string, conversationSport: Sport = sport) =>
@@ -2280,6 +2412,7 @@ export default function App() {
     });
 
   const openConversationThread = (thread: ConversationThread) => {
+    void restoreConversationVisibility(thread.conversationId);
     setConversationThreads((current) => [
       thread,
       ...removeDuplicateThreads(current, {
@@ -2336,6 +2469,45 @@ export default function App() {
     }));
   };
 
+  const loadExistingDirectConversationThread = async (
+    otherProfile: DirectConversationTarget,
+    emptyPreview = 'Start your conversation',
+  ): Promise<ConversationThread | null> => {
+    if (!otherProfile.profileId) {
+      return null;
+    }
+
+    const conversationId = await lookupSharedConversationId(otherProfile.profileId);
+    if (!conversationId) {
+      return null;
+    }
+
+    const messages = await loadConversationMessages(conversationId);
+    if (messages === null) {
+      return null;
+    }
+
+    const preview = messages.at(-1)?.body || emptyPreview;
+    const unreadCount = messages.filter((message) => message.from === 'them' && !message.isRead).length;
+
+    return {
+      id: conversationId,
+      conversationId,
+      otherProfileId: otherProfile.profileId,
+      otherRole: otherProfile.role,
+      name: otherProfile.name,
+      preview,
+      sport: otherProfile.sport,
+      avatar: otherProfile.avatar,
+      team: otherProfile.team,
+      position: otherProfile.position,
+      age: otherProfile.age,
+      messages,
+      unreadCount,
+      pendingApproval: false,
+    };
+  };
+
   const ensureDirectConversationThread = async (
     otherProfile: DirectConversationTarget,
     emptyPreview = 'Start your conversation',
@@ -2348,6 +2520,11 @@ export default function App() {
     const existingConversation = findExistingConversation(otherProfile.profileId, otherProfile.name, otherProfile.sport);
     if (existingConversation?.conversationId) {
       return existingConversation;
+    }
+
+    const existingRemoteConversation = await loadExistingDirectConversationThread(otherProfile, emptyPreview);
+    if (existingRemoteConversation) {
+      return existingRemoteConversation;
     }
 
     if (!session?.user || !otherProfile.profileId || !isSupabaseConfigured) {
@@ -2427,6 +2604,76 @@ export default function App() {
     );
   };
 
+  const sendContactRequest = async (
+    recipient: DirectConversationTarget,
+    note: string,
+  ): Promise<PairRequestState> => {
+    if (!session?.user) {
+      Alert.alert('Not signed in', 'Log in first so you can send contact requests.');
+      return null;
+    }
+
+    if (!isSupabaseConfigured) {
+      Alert.alert('Supabase not configured', 'Your project is not connected yet.');
+      return null;
+    }
+
+    if (!recipient.profileId) {
+      Alert.alert('Profile not available yet', `${recipient.name} is not connected to the live database yet.`);
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('contact_requests')
+      .insert({
+        sender_id: session.user.id,
+        receiver_id: recipient.profileId,
+        sport,
+        note,
+        status: 'pending',
+      })
+      .select('id, sender_id, receiver_id, status, note')
+      .single();
+
+    if (error) {
+      Alert.alert('Request failed', error.message);
+      return null;
+    }
+
+    setMessagingRefreshKey((current) => current + 1);
+    return data as PairRequestState;
+  };
+
+  const openPendingRequestForProfile = (
+    recipient: DirectConversationTarget,
+    requestState: PairRequestState,
+  ) => {
+    const existingPendingThread = findPendingRequestThread(recipient.profileId);
+
+    if (existingPendingThread) {
+      openConversationThread(existingPendingThread);
+      return;
+    }
+
+    const pendingThread: ConversationThread = {
+      id: `request-${requestState?.id ?? recipient.profileId}`,
+      name: recipient.name,
+      preview: 'Pending contact request',
+      sport: recipient.sport,
+      otherProfileId: recipient.profileId,
+      otherRole: recipient.role,
+      avatar: recipient.avatar,
+      team: recipient.team,
+      position: recipient.position,
+      age: recipient.age,
+      messages: [{ from: 'me', body: requestState?.note || 'Contact request sent. Waiting for acceptance.', isRead: true }],
+      pendingApproval: true,
+      unreadCount: 0,
+    };
+
+    openConversationThread(pendingThread);
+  };
+
   const handleMessageProfile = (name: string, openingMessage: string, conversationSport: Sport = sport) => {
     openConversationThread({
       id: `${name.toLowerCase().replace(/\s+/g, '-')}-chat`,
@@ -2439,6 +2686,8 @@ export default function App() {
   };
 
   const handleCoachRequestContact = async (coach: CoachCard) => {
+    const currentUserId = session?.user?.id;
+
     if (coach.profileId && coach.profileId === session?.user?.id) {
       Alert.alert('Your profile', 'You cannot message your own coach profile.');
       return;
@@ -2449,7 +2698,60 @@ export default function App() {
       return;
     }
 
-    await openCoachConversation(coach);
+    const coachTarget: DirectConversationTarget = {
+      profileId: coach.profileId,
+      name: coach.name,
+      role: 'coach',
+      sport: coach.sport,
+      avatar: coach.avatar,
+      team: coach.team,
+    };
+
+    const existingConversation = await loadExistingDirectConversationThread(coachTarget, 'Start your conversation');
+    if (existingConversation) {
+      openConversationThread(existingConversation);
+      setMessagingRefreshKey((current) => current + 1);
+      return;
+    }
+
+    if (!coach.profileId) {
+      Alert.alert('Coach not available yet', `${coach.name} is not connected to the live database yet.`);
+      return;
+    }
+
+    if (!currentUserId) {
+      Alert.alert('Not signed in', 'Log in first so you can request contact.');
+      return;
+    }
+
+    const requestState = await lookupPairRequestState(coach.profileId);
+
+    if (requestState?.status === 'accepted') {
+      await openCoachConversation(coach);
+      return;
+    }
+
+    if (requestState?.status === 'pending') {
+      if (requestState.sender_id === currentUserId) {
+        openPendingRequestForProfile(coachTarget, requestState);
+        return;
+      }
+
+      Alert.alert('Request pending', 'This contact request is still awaiting action.');
+      return;
+    }
+
+    const createdRequest = await sendContactRequest(
+      coachTarget,
+      `Player ${form.fullName || session?.user?.email || 'A player'} requested contact.`,
+    );
+
+    if (!createdRequest) {
+      return;
+    }
+
+    openPendingRequestForProfile(coachTarget, createdRequest);
+    Alert.alert('Request sent', `Your contact request has been sent to ${coach.name}.`);
   };
 
   const handlePlayerContact = async (player: PlayerCard) => {
@@ -2515,6 +2817,11 @@ export default function App() {
 
     if (!coach) {
       Alert.alert('Coach not available yet', `${offer.coachName} is not connected to the live database yet.`);
+      return;
+    }
+
+    if (role === 'player') {
+      await handleCoachRequestContact(coach);
       return;
     }
 
@@ -3506,7 +3813,7 @@ export default function App() {
                           <Text style={styles.cardText}>No pending requests right now.</Text>
                         </View>
                       )
-                    : selectedConversation
+                      : selectedConversation
                       ? conversationDetailCard(
                           selectedConversation,
                           draftMessage,
@@ -3519,7 +3826,14 @@ export default function App() {
                           },
                         )
                       : filteredConversations.length > 0
-                        ? filteredConversations.map((item) => conversationCard(item, () => handleOpenConversation(item.id)))
+                        ? filteredConversations.map((item) => (
+                            <ConversationCardRow
+                              key={item.id}
+                              conversation={item}
+                              onDelete={item.conversationId ? () => void handleHideConversation(item.id) : undefined}
+                              onOpen={() => handleOpenConversation(item.id)}
+                            />
+                          ))
                         : (
                           <View style={styles.box}>
                             <Text style={styles.cardText}>
@@ -4203,23 +4517,90 @@ function offerDetailCard(
   );
 }
 
-function conversationCard(conversation: ConversationThread, onOpen: () => void) {
+function ConversationCardRow({
+  conversation,
+  onDelete,
+  onOpen,
+}: {
+  conversation: ConversationThread;
+  onDelete?: () => void;
+  onOpen: () => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        !!onDelete && gestureState.dx > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy),
+      onPanResponderMove: (_, gestureState) => {
+        if (!onDelete) {
+          return;
+        }
+
+        translateX.setValue(Math.min(Math.max(gestureState.dx, 0), 108));
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (!onDelete) {
+          return;
+        }
+
+        if (gestureState.dx >= 84) {
+          Animated.timing(translateX, {
+            duration: 120,
+            toValue: 132,
+            useNativeDriver: true,
+          }).start(() => {
+            translateX.setValue(0);
+            onDelete();
+          });
+          return;
+        }
+
+        Animated.spring(translateX, {
+          bounciness: 6,
+          speed: 16,
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, {
+          bounciness: 6,
+          speed: 16,
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
+
   return (
-    <Pressable key={conversation.id} onPress={onOpen} style={styles.personCard}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{conversation.name.slice(0, 2)}</Text>
-      </View>
-      <View style={styles.cardBody}>
-        <Text style={styles.cardName}>{conversation.name}</Text>
-        <View style={styles.conversationPreviewRow}>
-          <Text style={[styles.cardText, conversation.unreadCount ? styles.unreadConversationText : null]}>{conversation.preview}</Text>
-          {conversation.unreadCount ? <View style={styles.unreadDot} /> : null}
+    <View style={styles.swipeConversationShell}>
+      {onDelete ? (
+        <View style={styles.swipeDeleteBackground}>
+          <Text style={styles.swipeDeleteLabel}>Delete Chat</Text>
         </View>
-        <Pressable style={styles.lightAction} onPress={onOpen}>
-          <Text style={styles.lightActionText}>Open Chat</Text>
+      ) : null}
+      <Animated.View
+        {...(onDelete ? panResponder.panHandlers : {})}
+        style={[styles.swipeConversationContent, { transform: [{ translateX }] }]}
+      >
+        <Pressable onPress={onOpen} style={styles.personCard}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{conversation.name.slice(0, 2)}</Text>
+          </View>
+          <View style={styles.cardBody}>
+            <Text style={styles.cardName}>{conversation.name}</Text>
+            <View style={styles.conversationPreviewRow}>
+              <Text style={[styles.cardText, conversation.unreadCount ? styles.unreadConversationText : null]}>{conversation.preview}</Text>
+              {conversation.unreadCount ? <View style={styles.unreadDot} /> : null}
+            </View>
+            <Pressable style={styles.lightAction} onPress={onOpen}>
+              <Text style={styles.lightActionText}>Open Chat</Text>
+            </Pressable>
+          </View>
         </Pressable>
-      </View>
-    </Pressable>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -4705,6 +5086,33 @@ const styles = StyleSheet.create({
   },
   cardBody: { flex: 1, gap: 6, paddingTop: 2 },
   conversationPreviewRow: { alignItems: 'center', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
+  swipeConversationShell: {
+    marginBottom: 12,
+    position: 'relative',
+  },
+  swipeConversationContent: {
+    position: 'relative',
+    zIndex: 2,
+  },
+  swipeDeleteBackground: {
+    alignItems: 'flex-end',
+    backgroundColor: 'rgba(143, 29, 29, 0.9)',
+    borderRadius: 22,
+    bottom: 0,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 148,
+  },
+  swipeDeleteLabel: {
+    color: '#FFF1F1',
+    fontFamily: 'Montserrat_700Bold',
+    fontSize: 12,
+    letterSpacing: 0.35,
+    textTransform: 'uppercase',
+  },
   conversationHeaderPressable: {
     alignItems: 'center',
     marginBottom: 6,

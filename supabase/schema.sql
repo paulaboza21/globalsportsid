@@ -90,6 +90,13 @@ create table if not exists public.direct_conversation_pairs (
   check (profile_low <> profile_high)
 );
 
+create table if not exists public.hidden_conversations (
+  conversation_id uuid not null references public.conversations (id) on delete cascade,
+  profile_id uuid not null references public.profiles (id) on delete cascade,
+  hidden_at timestamptz not null default timezone('utc', now()),
+  primary key (conversation_id, profile_id)
+);
+
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   conversation_id uuid not null references public.conversations (id) on delete cascade,
@@ -110,6 +117,9 @@ create index if not exists conversation_members_profile_idx
 
 create index if not exists direct_conversation_pairs_conversation_idx
   on public.direct_conversation_pairs (conversation_id);
+
+create index if not exists hidden_conversations_profile_idx
+  on public.hidden_conversations (profile_id, hidden_at desc);
 
 create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);
@@ -388,6 +398,15 @@ begin
 
   if exists (
     select 1
+    from public.direct_conversation_pairs
+    where profile_low = normalized_sender
+      and profile_high = normalized_receiver
+  ) then
+    raise exception 'A direct conversation between these two users already exists.';
+  end if;
+
+  if exists (
+    select 1
     from public.contact_requests existing_request
     where least(existing_request.sender_id, existing_request.receiver_id) = normalized_sender
       and greatest(existing_request.sender_id, existing_request.receiver_id) = normalized_receiver
@@ -616,6 +635,16 @@ begin
     return existing_conversation_id;
   end if;
 
+  if acting_role = 'player' and not exists (
+    select 1
+    from public.contact_requests
+    where status = 'accepted'
+      and sender_id in (acting_user, other_profile_id)
+      and receiver_id in (acting_user, other_profile_id)
+  ) then
+    raise exception 'Players must request contact and wait for acceptance before messaging coaches.';
+  end if;
+
   insert into public.conversations default values
   returning id into new_conversation_id;
 
@@ -750,6 +779,7 @@ alter table public.offers enable row level security;
 alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 alter table public.direct_conversation_pairs enable row level security;
+alter table public.hidden_conversations enable row level security;
 alter table public.messages enable row level security;
 
 alter table public.profiles force row level security;
@@ -759,6 +789,7 @@ alter table public.offers force row level security;
 alter table public.conversations force row level security;
 alter table public.conversation_members force row level security;
 alter table public.direct_conversation_pairs force row level security;
+alter table public.hidden_conversations force row level security;
 alter table public.messages force row level security;
 
 drop policy if exists "profiles_select_same_sport" on public.profiles;
@@ -928,6 +959,27 @@ on public.direct_conversation_pairs
 for select
 to authenticated
 using (profile_low = auth.uid() or profile_high = auth.uid());
+
+drop policy if exists "hidden_conversations_select_own" on public.hidden_conversations;
+create policy "hidden_conversations_select_own"
+on public.hidden_conversations
+for select
+to authenticated
+using (profile_id = auth.uid());
+
+drop policy if exists "hidden_conversations_insert_own" on public.hidden_conversations;
+create policy "hidden_conversations_insert_own"
+on public.hidden_conversations
+for insert
+to authenticated
+with check (profile_id = auth.uid() and public.is_conversation_member(conversation_id));
+
+drop policy if exists "hidden_conversations_delete_own" on public.hidden_conversations;
+create policy "hidden_conversations_delete_own"
+on public.hidden_conversations
+for delete
+to authenticated
+using (profile_id = auth.uid());
 
 drop policy if exists "messages_select_members" on public.messages;
 create policy "messages_select_members"
